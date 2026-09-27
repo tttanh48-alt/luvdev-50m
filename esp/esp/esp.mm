@@ -1,5 +1,6 @@
 // ============================================================
-// esp.mm — Part 1/8
+// esp.mm — Part 1/4
+// Header + extern + globals + config + color + cache
 // ============================================================
 
 #import "esp.h"
@@ -76,6 +77,7 @@ static Vector3 AimTrackAndLead(uint64_t pawn, Vector3 bodyPos, float distanceMet
 static Vector3 AimTrackAndLeadEx(uint64_t pawn, Vector3 bodyPos, float distanceMeters, bool lockYToBody, bool bulletLead);
 static inline Vector3 AimCameraOrigin(uint64_t localPawn, const Vector3 &fallback);
 static inline Vector3 ResolveHeadWorldPosTracked(uint64_t pawn);
+static inline Vector3 ResolveHipWorldPosTracked(uint64_t pawn);
 static inline Vector3 ReadPlayerRootTransform(uint64_t pawn);
 static inline bool looksLikeWorldPos(const Vector3 &p);
 static float esp_aim_delta_time(void);
@@ -85,7 +87,7 @@ bool get_IsVisible(uint64_t player);
 bool get_IsFPPVisible(uint64_t player);
 static inline uint32_t get_VisibleFlags(uint64_t player);
 
-// ---------- Patched addresses (dùng cho ToggleSpeedX50Safe) ----------
+// ---------- Patched addresses ----------
 static std::vector<mach_vm_address_t> g_patchedAddresses;
 static std::mutex                     g_patchedMtx;
 
@@ -133,7 +135,7 @@ static inline uint64_t kLastAimingTargetFromWeaponOff(void) {
     return off ? off : (GameTargetIsMax() ? 0xDE8ull : 0xDE0ull);
 }
 
-// ---------- Global config variables (ESP + Aim) ----------
+// ---------- Global config ----------
 uint64_t Moudule_Base = -1;
 int g_PlayerDrawIndex = 1;
 
@@ -185,6 +187,141 @@ int fovColorMode = 0;
 float aimAssistThick = 1.5f;
 float aimAssistR = 0.0f, aimAssistG = 1.0f, aimAssistB = 1.0f;
 
+// ---------- Color helpers ----------
+static inline void ESPRainbowRGB(float phaseOffset, float *outR, float *outG, float *outB) {
+    float h = fmodf((float)CACurrentMediaTime() * 0.45f + phaseOffset, 1.0f);
+    if (h < 0.0f) h += 1.0f;
+    float s = 1.0f, v = 1.0f;
+    float c = v * s;
+    float x = c * (1.0f - fabsf(fmodf(h * 6.0f, 2.0f) - 1.0f));
+    float m = v - c;
+    float r = 0, g = 0, b = 0;
+    float h6 = h * 6.0f;
+    if (h6 < 1.0f)      { r = c; g = x; b = 0; }
+    else if (h6 < 2.0f) { r = x; g = c; b = 0; }
+    else if (h6 < 3.0f) { r = 0; g = c; b = x; }
+    else if (h6 < 4.0f) { r = 0; g = x; b = c; }
+    else if (h6 < 5.0f) { r = x; g = 0; b = c; }
+    else                { r = c; g = 0; b = x; }
+    *outR = r + m;
+    *outG = g + m;
+    *outB = b + m;
+}
+
+static inline void ESPResolveDrawColor(int mode, float baseR, float baseG, float baseB,
+                                       float phaseOffset, float *outR, float *outG, float *outB) {
+    if (mode == 1) {
+        ESPRainbowRGB(phaseOffset, outR, outG, outB);
+    } else {
+        *outR = baseR;
+        *outG = baseG;
+        *outB = baseB;
+    }
+}
+
+// ---------- Cache structs ----------
+static const int kAimLockMaxLostFrames = 4;
+
+struct PlayerCache {
+    uint64_t pawn = 0;
+    bool isBot = false;
+    bool isKnocked = false;
+    int curHP = 0;
+    int maxHP = 0;
+    bool isFPP = false;
+    bool isCamVis = false;
+    bool isPvsVis = false;
+    bool isTrueVis = false;
+    int visGoodFrames = 0;
+    int frame = 0;
+};
+
+static PlayerCache g_playerCache[96];
+static int g_cacheFrameCounter = 0;
+
+struct PosTrack {
+    uint64_t pawn = 0;
+    Vector3 headSmoothed{};
+    Vector3 hipSmoothed{};
+    Vector3 lastHeadRaw{};
+    Vector3 lastHipRaw{};
+    Vector3 headVel{};
+    Vector3 hipVel{};
+    CFTimeInterval lastHeadT = 0;
+    CFTimeInterval lastHipT = 0;
+    int headSrc = 0;
+    int hipSrc = 0;
+    int headSrcHold = 0;
+    int hipSrcHold = 0;
+    int frame = 0;
+    bool hasHead = false;
+    bool hasHip = false;
+    bool isBot = false;
+    int deadUntilFrame = 0;
+    float bodyLen = 0.f;
+    int bodyLenHold = 0;
+    bool wasMounted = false;
+    int lastHeadSrcDisp = 0;
+    int lastHipSrcDisp = 0;
+};
+static PosTrack g_posTrack[96];
+
+static inline int PosTrackSlot(uint64_t pawn) {
+    uint64_t x = pawn ^ (pawn >> 17) ^ (pawn << 7);
+    return (int)(x % 96ull);
+}
+
+static inline int PlayerCacheSlot(uint64_t pawn) {
+    return PosTrackSlot(pawn);
+}
+
+struct EspPawnSnap {
+    uint64_t pawn = 0;
+    Vector3 head{};
+    Vector3 hip{};
+    Vector3 aimPos{};
+    float dis = 0.f;
+    int curHP = 0;
+    int maxHP = 200;
+    bool isBot = false;
+    bool isKnocked = false;
+    bool treatAsVehicle = false;
+    bool canAim = false;
+    bool wantDraw = false;
+};
+
+struct BoxScreenTrack {
+    uint64_t pawn = 0;
+    float h = 0.f;
+    float w = 0.f;
+    float cx = 0.f;
+    float topY = 0.f;
+    bool has = false;
+};
+static BoxScreenTrack g_boxScr[96];
+
+struct AimMotionTrack {
+    uint64_t pawn = 0;
+    Vector3 lastHip = {0, 0, 0};
+    Vector3 lastHead = {0, 0, 0};
+    Vector3 vel = {0, 0, 0};
+    Vector3 smoothHead = {0, 0, 0};
+    CFTimeInterval lastT = 0;
+    bool valid = false;
+};
+
+static AimMotionTrack g_aimMotion[96];
+
+static inline bool IsZeroVec(const Vector3 &v) {
+    return v.x == 0.0f && v.y == 0.0f && v.z == 0.0f;
+}
+
+static inline float Clamp01f(float v) {
+    if (v < 0.0f) return 0.0f;
+    if (v > 1.0f) return 1.0f;
+    return v;
+}
+
 // ---------- Weapon raycast ----------
 struct GameWeaponRaycast {
     bool valid = false;
@@ -193,7 +330,8 @@ struct GameWeaponRaycast {
 };
 
 // ============================================================
-// esp.mm — Part 2/8
+// esp.mm — Part 2/4
+// Raycast + wall + position + head/hip + silent + aim
 // ============================================================
 
 static inline GameWeaponRaycast SampleLocalWeaponRaycast(uint64_t localPawn, const Vector3 &fallbackOrigin) {
@@ -340,10 +478,8 @@ static inline bool AimTargetVisibleStrictForSilent(uint64_t player) {
     (void)player;
     return true;
 }
-// ============================================================
-// esp.mm — Part 3/8
-// ============================================================
 
+// ---------- Position resolve ----------
 static inline Vector3 tryTransformPos(uint64_t nodeOrTf) {
     if (!isVaildPtr(nodeOrTf)) return Vector3{0, 0, 0};
     Vector3 p = getPositionExt(nodeOrTf);
@@ -589,12 +725,6 @@ static inline Vector3 ResolvePawnWorldPosAny(uint64_t pawn) {
     }
     return Vector3{0, 0, 0};
 }
-// ============================================================
-// esp.mm — Part 4/8
-// ============================================================
-
-static inline Vector3 ResolveHeadWorldPosTracked(uint64_t pawn);
-static inline Vector3 ResolveHipWorldPosTracked(uint64_t pawn);
 
 Vector3 ResolvePawnWorldPosForESP(uint64_t pawn) {
     Vector3 hip = ResolveHipWorldPosTracked(pawn);
@@ -666,7 +796,7 @@ static inline Vector3 AimCameraOrigin(uint64_t localPawn, const Vector3 &fallbac
     return fallback;
 }
 
-// ---------- Silent aim thread-safe state ----------
+// ---------- Silent aim state ----------
 static std::mutex        g_silentMtx;
 static std::atomic<bool> g_silentKeepRunning{false};
 static std::thread       g_silentThread;
@@ -817,7 +947,6 @@ static inline void AimSyncFireHit(uint64_t localPawn, const Vector3 &fromLoc, co
     (void)SilentForcePrimary(localPawn, fromLoc, targetPos);
 }
 
-// ---------- Silent thread — AN TOÀN, có sleep, có stop flag ----------
 static void SilentAimThread(uint64_t localPlayer) {
     while (g_silentKeepRunning.load(std::memory_order_relaxed)) {
         bool hasTarget = false;
@@ -907,20 +1036,362 @@ static void SilentAimStop(void) {
     g_silentAimPosMode = 0;
 }
 
-// ---------- Aim lock: no-op (đã bỏ thread) ----------
-static void AimLockSetQuat(uint64_t localPlayer, const Quaternion &q) {
-    (void)localPlayer; (void)q;
-}
+static void AimLockSetQuat(uint64_t localPlayer, const Quaternion &q) { (void)localPlayer; (void)q; }
 static void AimLockSet(uint64_t localPlayer, uint64_t enemy, int posMode, float dist, const Vector3 &fromLoc) {
     (void)localPlayer; (void)enemy; (void)posMode; (void)dist; (void)fromLoc;
 }
 static void AimLockClear(void) {}
 static void AimLockStop(void) {}
 
-// ============================================================
-// esp.mm — Part 5/8
-// ============================================================
+// ---------- Track & extrapolate ----------
+static inline Vector3 TrackAndExtrapolate(Vector3 raw, Vector3 &lastRaw, Vector3 &vel,
+                                          CFTimeInterval &lastT, bool &has, float leadSec) {
+    if (!looksLikeWorldPos(raw)) {
+        has = false;
+        return Vector3{0, 0, 0};
+    }
+    const CFTimeInterval now = CACurrentMediaTime();
+    if (!has || lastT <= 0.0) {
+        lastRaw = raw;
+        vel = Vector3{0, 0, 0};
+        lastT = now;
+        has = true;
+        return raw;
+    }
+    float dt = (float)(now - lastT);
+    if (dt < 0.0005f) dt = 0.0005f;
+    if (dt > 0.18f) {
+        lastRaw = raw;
+        vel = Vector3{0, 0, 0};
+        lastT = now;
+        return raw;
+    }
+    Vector3 inst = {
+        (raw.x - lastRaw.x) / dt,
+        (raw.y - lastRaw.y) / dt,
+        (raw.z - lastRaw.z) / dt
+    };
+    float instSp = sqrtf(inst.x * inst.x + inst.z * inst.z);
+    float a = 0.62f + fminf(instSp, 12.f) * 0.025f;
+    if (a > 0.92f) a = 0.92f;
+    vel.x = vel.x * (1.f - a) + inst.x * a;
+    vel.z = vel.z * (1.f - a) + inst.z * a;
+    vel.y = vel.y * (1.f - a) + inst.y * a;
+    float sp = sqrtf(vel.x * vel.x + vel.z * vel.z);
+    if (sp < 0.30f) { vel.x = 0.f; vel.z = 0.f; sp = 0.f; }
+    if (sp > 15.f) {
+        float inv = 15.f / sp;
+        vel.x *= inv; vel.z *= inv; sp = 15.f;
+    }
+    float posA = 0.62f + fminf(sp, 10.f) * 0.032f;
+    if (posA > 0.94f) posA = 0.94f;
+    float jump = Vector3::Distance(raw, lastRaw);
+    if (jump > 1.10f) posA = 1.0f;
+    Vector3 smoothed = {
+        lastRaw.x * (1.f - posA) + raw.x * posA,
+        lastRaw.y * (1.f - posA) + raw.y * posA,
+        lastRaw.z * (1.f - posA) + raw.z * posA
+    };
+    lastRaw = smoothed;
+    lastT = now;
+    has = true;
+    float lead = 0.f;
+    if (sp > 2.4f && leadSec > 0.f) {
+        lead = leadSec * fminf(sp / 10.f, 1.0f);
+        if (lead > 0.055f) lead = 0.055f;
+    }
+    Vector3 out = smoothed;
+    out.x += vel.x * lead;
+    out.z += vel.z * lead;
+    return out;
+}
 
+static inline void SmoothBoxScreen(uint64_t pawn, float &topY, float &centerX,
+                                   float &boxH, float &boxW) {
+    (void)pawn; (void)topY; (void)centerX; (void)boxH; (void)boxW;
+    return;
+}
+
+static inline void ClearBoxScreenForPawn(uint64_t pawn) {
+    if (pawn == 0) return;
+    BoxScreenTrack &t = g_boxScr[pawn % 96ull];
+    if (t.pawn == pawn) t = BoxScreenTrack{};
+}
+
+// ---------- Pick stable head/hip ----------
+static inline Vector3 PickStableHeadRaw(uint64_t pawn, PosTrack &tr) {
+    Vector3 head = getPositionExt(getHead(pawn));
+    Vector3 hip  = getPositionExt(getHip(pawn));
+    Vector3 root = ReadPlayerRootTransform(pawn);
+    Vector3 mount{};
+    const bool mounted = IsActivelyMounted(pawn, &mount);
+    if (!tr.hasHead || tr.pawn != pawn) {
+        tr.isBot = get_IsBot(pawn);
+    }
+    const bool remoteHuman = !tr.isBot;
+    auto validHeadNear = [&](const Vector3 &h, const Vector3 &anchor, float maxD) -> bool {
+        if (!looksLikeWorldPos(h) || !looksLikeWorldPos(anchor)) return false;
+        float dx = h.x - anchor.x, dy = h.y - anchor.y, dz = h.z - anchor.z;
+        float d2 = dx*dx + dy*dy + dz*dz;
+        return d2 < maxD * maxD && h.y >= anchor.y - 0.85f;
+    };
+    int preferred = 0;
+    Vector3 raw{};
+    if (mounted && looksLikeWorldPos(mount)) {
+        bool bonesDead = !looksLikeWorldPos(head) && !looksLikeWorldPos(hip);
+        bool collapsed = false;
+        if (looksLikeWorldPos(head) && looksLikeWorldPos(hip)) {
+            float bd = Vector3::Distance(head, hip);
+            collapsed = (bd < 0.20f);
+        }
+        if (bonesDead || collapsed || !looksLikeWorldPos(root)) {
+            preferred = 4;
+            raw = mount;
+        }
+    }
+    if (preferred == 0 && remoteHuman && looksLikeWorldPos(root)) {
+        float headLagXZ = 0.f;
+        if (looksLikeWorldPos(head)) {
+            float dx = head.x - root.x, dz = head.z - root.z;
+            headLagXZ = sqrtf(dx * dx + dz * dz);
+        }
+        if (looksLikeWorldPos(head) && headLagXZ < 0.85f && validHeadNear(head, root, mounted ? 5.5f : 4.0f)) {
+            preferred = 1;
+            raw = head;
+        } else if (looksLikeWorldPos(head) && headLagXZ < 2.8f) {
+            preferred = 5;
+            raw.x = root.x;
+            raw.z = root.z;
+            raw.y = head.y;
+            if (raw.y < root.y + 0.2f) raw.y = root.y + (mounted ? 1.05f : 0.85f);
+        } else {
+            preferred = 3;
+            raw = root;
+            raw.y += mounted ? 1.05f : 0.85f;
+        }
+    } else if (preferred == 0) {
+        if (looksLikeWorldPos(head)) {
+            Vector3 anchor = looksLikeWorldPos(hip) ? hip : root;
+            float maxD = mounted ? 5.5f : 4.0f;
+            if (!looksLikeWorldPos(anchor) || validHeadNear(head, anchor, maxD)) {
+                preferred = 1;
+                raw = head;
+            }
+        }
+        if (preferred == 0 && looksLikeWorldPos(hip)) {
+            preferred = 2;
+            raw = hip;
+            raw.y += 0.55f;
+        }
+        if (preferred == 0 && looksLikeWorldPos(root)) {
+            preferred = 3;
+            raw = root;
+            raw.y += mounted ? 1.05f : 0.85f;
+        }
+    }
+    if (preferred == 0 && mounted && looksLikeWorldPos(mount)) {
+        preferred = 4;
+        raw = mount;
+    }
+    if (preferred == 0) return Vector3{0, 0, 0};
+    if (tr.pawn == pawn && tr.headSrc != 0 && tr.headSrcHold > 0) {
+        Vector3 keep{};
+        bool ok = false;
+        if (tr.headSrc == 1 && looksLikeWorldPos(head)) {
+            Vector3 anchor = looksLikeWorldPos(root) ? root : hip;
+            if (!looksLikeWorldPos(anchor) || validHeadNear(head, anchor, 5.5f)) {
+                keep = head; ok = true;
+            }
+        } else if (tr.headSrc == 5 && looksLikeWorldPos(root)) {
+            keep = root;
+            keep.y = looksLikeWorldPos(head) ? head.y : (root.y + 0.85f);
+            ok = true;
+        } else if (tr.headSrc == 2 && looksLikeWorldPos(hip)) {
+            keep = hip; keep.y += 0.55f; ok = true;
+        } else if (tr.headSrc == 3 && looksLikeWorldPos(root)) {
+            keep = root; keep.y += mounted ? 1.05f : 0.85f; ok = true;
+        } else if (tr.headSrc == 4 && mounted && looksLikeWorldPos(mount)) {
+            keep = mount; ok = true;
+        }
+        bool forceRoot = false;
+        if (remoteHuman && looksLikeWorldPos(root) && looksLikeWorldPos(head)) {
+            float dx = head.x - root.x, dz = head.z - root.z;
+            if (dx*dx + dz*dz > 1.2f * 1.2f && (preferred == 3 || preferred == 5))
+                forceRoot = true;
+        }
+        if (ok && !forceRoot && !(preferred == 5 && tr.headSrc == 1 && remoteHuman)) {
+            if (!(remoteHuman && (preferred == 5 || preferred == 3) && tr.headSrc == 1)) {
+                tr.headSrcHold--;
+                raw = keep;
+                preferred = tr.headSrc;
+            } else {
+                tr.headSrc = preferred;
+                tr.headSrcHold = 2;
+            }
+        } else {
+            tr.headSrc = preferred;
+            tr.headSrcHold = 2;
+        }
+    } else {
+        tr.headSrc = preferred;
+        tr.headSrcHold = 2;
+    }
+    return raw;
+}
+
+static inline Vector3 PickStableHipRaw(uint64_t pawn, PosTrack &tr) {
+    Vector3 hip  = getPositionExt(getHip(pawn));
+    Vector3 root = ReadPlayerRootTransform(pawn);
+    Vector3 head = getPositionExt(getHead(pawn));
+    Vector3 mount{};
+    const bool mounted = IsActivelyMounted(pawn, &mount);
+    if (!tr.hasHip || tr.pawn != pawn) {
+        tr.isBot = get_IsBot(pawn);
+    }
+    const bool remoteHuman = !tr.isBot;
+    int preferred = 0;
+    Vector3 raw{};
+    if (mounted && looksLikeWorldPos(mount)) {
+        bool bonesDead = !looksLikeWorldPos(hip) && !looksLikeWorldPos(head);
+        bool collapsed = looksLikeWorldPos(hip) && looksLikeWorldPos(head) &&
+                         Vector3::Distance(hip, head) < 0.20f;
+        if (bonesDead || collapsed || !looksLikeWorldPos(root)) {
+            preferred = 4;
+            raw = mount;
+            raw.y -= 0.35f;
+        }
+    }
+    if (preferred == 0 && remoteHuman && looksLikeWorldPos(root)) {
+        if (looksLikeWorldPos(hip)) {
+            float dx = hip.x - root.x, dz = hip.z - root.z;
+            float lag = sqrtf(dx*dx + dz*dz);
+            if (lag < 0.90f) {
+                preferred = 2; raw = hip;
+            } else {
+                preferred = 3;
+                raw = root;
+                raw.y = (lag < 2.5f) ? hip.y : root.y;
+            }
+        } else {
+            preferred = 3; raw = root;
+        }
+    } else if (preferred == 0) {
+        if (looksLikeWorldPos(hip)) { preferred = 2; raw = hip; }
+        else if (looksLikeWorldPos(root)) { preferred = 3; raw = root; }
+        else if (looksLikeWorldPos(head)) { preferred = 1; raw = head; raw.y -= 0.55f; }
+        else if (mounted && looksLikeWorldPos(mount)) { preferred = 4; raw = mount; raw.y -= 0.35f; }
+    }
+    if (preferred == 0 && mounted && looksLikeWorldPos(mount)) {
+        preferred = 4; raw = mount; raw.y -= 0.35f;
+    }
+    if (preferred == 0) return Vector3{0, 0, 0};
+    if (tr.pawn == pawn && tr.hipSrc != 0 && tr.hipSrcHold > 0) {
+        Vector3 keep{};
+        bool ok = false;
+        if (tr.hipSrc == 2 && looksLikeWorldPos(hip)) { keep = hip; ok = true; }
+        else if (tr.hipSrc == 3 && looksLikeWorldPos(root)) { keep = root; ok = true; }
+        else if (tr.hipSrc == 1 && looksLikeWorldPos(head)) { keep = head; keep.y -= 0.55f; ok = true; }
+        else if (tr.hipSrc == 4 && mounted && looksLikeWorldPos(mount)) { keep = mount; keep.y -= 0.35f; ok = true; }
+        bool forceRoot = false;
+        if (remoteHuman && looksLikeWorldPos(root) && looksLikeWorldPos(hip)) {
+            float dx = hip.x - root.x, dz = hip.z - root.z;
+            if (dx*dx + dz*dz > 1.2f * 1.2f && preferred == 3) forceRoot = true;
+        }
+        if (ok && !forceRoot) {
+            if (!(remoteHuman && preferred == 3 && tr.hipSrc == 2)) {
+                tr.hipSrcHold--;
+                raw = keep;
+                preferred = tr.hipSrc;
+            } else {
+                tr.hipSrc = preferred;
+                tr.hipSrcHold = 2;
+            }
+        } else {
+            tr.hipSrc = preferred;
+            tr.hipSrcHold = 2;
+        }
+    } else {
+        tr.hipSrc = preferred;
+        tr.hipSrcHold = 2;
+    }
+    return raw;
+}
+
+static inline Vector3 ResolveHeadWorldPosTracked(uint64_t pawn) {
+    if (!isVaildPtr(pawn)) return Vector3{0, 0, 0};
+    PosTrack &tr = g_posTrack[PosTrackSlot(pawn)];
+    if (tr.pawn == pawn && tr.deadUntilFrame > 0 && g_cacheFrameCounter < tr.deadUntilFrame) {
+        return Vector3{0, 0, 0};
+    }
+    if (tr.pawn != pawn) {
+        tr = PosTrack{};
+        tr.pawn = pawn;
+        tr.isBot = get_IsBot(pawn);
+    }
+    Vector3 raw = PickStableHeadRaw(pawn, tr);
+    if (!looksLikeWorldPos(raw)) {
+        tr.hasHead = false;
+        tr.headSrc = 0;
+        tr.headSrcHold = 0;
+        return Vector3{0, 0, 0};
+    }
+    float lead = tr.isBot ? 0.f : 0.055f;
+    Vector3 out = TrackAndExtrapolate(raw, tr.lastHeadRaw, tr.headVel, tr.lastHeadT, tr.hasHead, lead);
+    tr.headSmoothed = out;
+    tr.frame = g_cacheFrameCounter;
+    return out;
+}
+
+static inline Vector3 ResolveHipWorldPosTracked(uint64_t pawn) {
+    if (!isVaildPtr(pawn)) return Vector3{0, 0, 0};
+    PosTrack &tr = g_posTrack[PosTrackSlot(pawn)];
+    if (tr.pawn == pawn && tr.deadUntilFrame > 0 && g_cacheFrameCounter < tr.deadUntilFrame) {
+        return Vector3{0, 0, 0};
+    }
+    if (tr.pawn != pawn) {
+        tr = PosTrack{};
+        tr.pawn = pawn;
+        tr.isBot = get_IsBot(pawn);
+    }
+    Vector3 raw = PickStableHipRaw(pawn, tr);
+    if (!looksLikeWorldPos(raw)) {
+        tr.hasHip = false;
+        tr.hipSrc = 0;
+        tr.hipSrcHold = 0;
+        return Vector3{0, 0, 0};
+    }
+    float lead = tr.isBot ? 0.f : 0.055f;
+    Vector3 out = TrackAndExtrapolate(raw, tr.lastHipRaw, tr.hipVel, tr.lastHipT, tr.hasHip, lead);
+    tr.hipSmoothed = out;
+    tr.frame = g_cacheFrameCounter;
+    return out;
+}
+
+static inline Vector3 EspSmoothDisplayPos(uint64_t pawn, Vector3 raw, bool isHead) {
+    if (!looksLikeWorldPos(raw) || !isVaildPtr(pawn)) return raw;
+    PosTrack &tr = g_posTrack[PosTrackSlot(pawn)];
+    if (tr.pawn == pawn && tr.deadUntilFrame > 0 && g_cacheFrameCounter < tr.deadUntilFrame) {
+        return Vector3{0,0,0};
+    }
+    if (tr.pawn != pawn) {
+        tr = PosTrack{};
+        tr.pawn = pawn;
+        tr.isBot = get_IsBot(pawn);
+    }
+    float lead = tr.isBot ? 0.f : 0.050f;
+    if (isHead) {
+        Vector3 out = TrackAndExtrapolate(raw, tr.lastHeadRaw, tr.headVel, tr.lastHeadT, tr.hasHead, lead);
+        tr.headSmoothed = out;
+        tr.frame = g_cacheFrameCounter;
+        return out;
+    }
+    Vector3 out = TrackAndExtrapolate(raw, tr.lastHipRaw, tr.hipVel, tr.lastHipT, tr.hasHip, lead);
+    tr.hipSmoothed = out;
+    tr.frame = g_cacheFrameCounter;
+    return out;
+}
+
+// ---------- Mono string ----------
 task_t g_target_task = 0;
 
 uint64_t AllocateMonoString(task_t task, uint64_t originalStrPtr, NSString *nsStr) {
@@ -973,22 +1444,7 @@ NSString *GenerateRainbowString(NSString *baseStr, int tickOffset) {
     return result;
 }
 
-static inline bool IsZeroVec(const Vector3 &v) {
-    return v.x == 0.0f && v.y == 0.0f && v.z == 0.0f;
-}
-
-struct AimMotionTrack {
-    uint64_t pawn = 0;
-    Vector3 lastHip = {0, 0, 0};
-    Vector3 lastHead = {0, 0, 0};
-    Vector3 vel = {0, 0, 0};
-    Vector3 smoothHead = {0, 0, 0};
-    CFTimeInterval lastT = 0;
-    bool valid = false;
-};
-
-static AimMotionTrack g_aimMotion[96];
-
+// ---------- Aim motion ----------
 static AimMotionTrack *AimMotionSlot(uint64_t pawn) {
     if (pawn == 0) return nullptr;
     int slotIdx = PosTrackSlot(pawn);
@@ -1223,7 +1679,8 @@ static inline Vector3 AimLookAtHeadLive(uint64_t localPawn, uint64_t targetPawn,
 }
 
 // ============================================================
-// esp.mm — Part 6/8
+// esp.mm — Part 3/4
+// ESP_View + updateFrame + ToggleSpeedX50Safe
 // ============================================================
 
 @interface HTHESPSecureWrapper : UITextField
@@ -1571,9 +2028,6 @@ static void ESPDiagHeartbeat(void) {
     if (layer.contents != (__bridge id)cgImg) layer.contents = (__bridge id)cgImg;
     if (!CGRectEqualToRect(layer.frame, frame)) layer.frame = frame;
 }
-// ============================================================
-// esp.mm — Part 7/8
-// ============================================================
 
 static inline uint64_t ESPPhaseNowUS(void) {
     static mach_timebase_info_data_t tb;
@@ -1836,7 +2290,7 @@ static inline uint64_t ESPPhaseNowUS(void) {
 }
 
 // ============================================================
-// ToggleSpeedX50Safe — CHỈ ĐỊNH NGHĨA 1 LẦN DUY NHẤT Ở ĐÂY
+// ToggleSpeedX50Safe — CHỈ 1 LẦN
 // ============================================================
 extern "C" void ToggleSpeedX50Safe(bool enable) {
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
@@ -1906,7 +2360,8 @@ extern "C" void ToggleSpeedX50Safe(bool enable) {
 }
 
 // ============================================================
-// esp.mm — Part 8/8
+// esp.mm — Part 4/4
+// renderESPWithBuffers + getters + prefs + end
 // ============================================================
 
 - (ESPFrameStats)renderESPWithBuffers:(ESPGeometryBuffers *)buffers
@@ -3475,7 +3930,7 @@ bool get_IsFPPVisible(uint64_t player) {
 }
 
 // ============================================================
-// write_aim_rotations — 4 offset
+// write_aim_rotations
 // ============================================================
 static void write_aim_rotations(uint64_t player, const Quaternion &out) {
     if (!isVaildPtr(player)) return;
