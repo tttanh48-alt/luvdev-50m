@@ -24,11 +24,14 @@ static NSString *const kBrandDev  = @"@VNTool";
 @property (nonatomic, strong) UIScrollView *scrollView;
 @property (nonatomic, strong) UIView *contentView;
 @property (nonatomic, strong) UILabel *titleLabel;
+
 @property (nonatomic, strong) UIView *controlCard;
 @property (nonatomic, strong) UIImageView *controlIconView;
 @property (nonatomic, strong) UILabel *controlTitleLabel;
 @property (nonatomic, strong) UILabel *controlSubtitleLabel;
 @property (nonatomic, strong) UIButton *startButton;
+
+// Quick toggles
 @property (nonatomic, strong) UIView *togglesCard;
 @property (nonatomic, strong) UILabel *aimbotLabel;
 @property (nonatomic, strong) UISwitch *aimbotSwitch;
@@ -38,6 +41,8 @@ static NSString *const kBrandDev  = @"@VNTool";
 @property (nonatomic, strong) UISwitch *camSwitch;
 @property (nonatomic, strong) UISlider *camSlider;
 @property (nonatomic, strong) UILabel *camValueLabel;
+
+// AIM card
 @property (nonatomic, strong) UIView *aimCard;
 @property (nonatomic, strong) UILabel *aimModeTitleLabel;
 @property (nonatomic, strong) UISegmentedControl *aimModeSegment;
@@ -51,6 +56,22 @@ static NSString *const kBrandDev  = @"@VNTool";
 @property (nonatomic, strong) UILabel *aimDistTitleLabel;
 @property (nonatomic, strong) UISlider *aimDistSlider;
 @property (nonatomic, strong) UILabel *aimDistValueLabel;
+
+// Functions card (Silent / Brutal / FakeName / FastReload / Streamer)
+@property (nonatomic, strong) UIView *functionsCard;
+@property (nonatomic, strong) UILabel *silentLabel;
+@property (nonatomic, strong) UISwitch *silentSwitch;
+@property (nonatomic, strong) UILabel *brutalLabel;
+@property (nonatomic, strong) UISwitch *brutalSwitch;
+@property (nonatomic, strong) UILabel *fakeNameLabel;
+@property (nonatomic, strong) UISwitch *fakeNameSwitch;
+@property (nonatomic, strong) UILabel *fastReloadLabel;
+@property (nonatomic, strong) UISwitch *fastReloadSwitch;
+@property (nonatomic, strong) UILabel *streamerLabel;
+@property (nonatomic, strong) UISwitch *streamerSwitch;
+@property (nonatomic, strong) UILabel *behindWallLabel;
+@property (nonatomic, strong) UISwitch *behindWallSwitch;
+
 @property (nonatomic, strong) UILabel *versionSectionLabel;
 @property (nonatomic, strong) UIButton *ffMaxCard;
 @property (nonatomic, strong) UIButton *ffCard;
@@ -58,20 +79,25 @@ static NSString *const kBrandDev  = @"@VNTool";
 @property (nonatomic, strong) UIImageView *ffIconView;
 @property (nonatomic, strong) UILabel *ffMaxNameLabel;
 @property (nonatomic, strong) UILabel *ffNameLabel;
+
 @property (nonatomic, strong) UIView *statusCard;
 @property (nonatomic, strong) UIView *statusDot;
 @property (nonatomic, strong) UILabel *statusLabel;
 @property (nonatomic, strong) UIButton *openGameButton;
+
 @property (nonatomic, strong) UIView *licenseCard;
 @property (nonatomic, strong) UILabel *licenseTitleLabel;
 @property (nonatomic, strong) UILabel *licenseValueLabel;
+
 @property (nonatomic, strong) UIView *authCard;
 @property (nonatomic, strong) UILabel *authTitleLabel;
 @property (nonatomic, strong) UILabel *authValueLabel;
+
 @property (nonatomic, strong) UIView *supportCard;
 @property (nonatomic, strong) UILabel *supportTitleLabel;
 @property (nonatomic, strong) UILabel *supportSubtitleLabel;
 @property (nonatomic, strong) UIButton *joinButton;
+
 @property (nonatomic, strong) UIView *extraCard;
 @property (nonatomic, strong) UILabel *autoCleanLabel;
 @property (nonatomic, strong) UISwitch *autoCleanSwitch;
@@ -82,15 +108,19 @@ static NSString *const kBrandDev  = @"@VNTool";
 @property (nonatomic, strong) UITextView *logTextView;
 @property (nonatomic, strong) UIButton *trashBtn;
 @property (nonatomic, strong) UILabel *footerLabel;
+
 @property (nonatomic, strong) NSTimer *pollTimer;
 @property (nonatomic, assign) NSInteger gameMissingStreak;
 @property (nonatomic, assign) CFTimeInterval pendingHUDEnableUntil;
 @property (nonatomic, assign) NSInteger hudRequestSerial;
+
 - (void)appendBootLog:(NSString *)line;
 - (void)refreshHUDState;
 @end
 
 @implementation HomeViewController
+
+#pragma mark - Lifecycle
 
 - (void)viewDidLoad {
     [super viewDidLoad];
@@ -118,6 +148,8 @@ static NSString *const kBrandDev  = @"@VNTool";
     [[NSNotificationCenter defaultCenter] removeObserver:self];
     [_pollTimer invalidate];
 }
+
+#pragma mark - Helpers
 
 - (UIColor *)cardBackground { return MDThemePanel(); }
 - (UIColor *)accentGreen { return MDThemeAccent(); }
@@ -186,6 +218,7 @@ static NSString *const kBrandDev  = @"@VNTool";
     _trashBtn.backgroundColor = MDThemePanel2();
     _trashBtn.layer.borderColor = MDThemeLine().CGColor;
     _trashBtn.tintColor = MDThemeText();
+
     if (_aimCard) {
         _aimCard.backgroundColor = MDThemePanel();
         _aimCard.layer.borderColor = MDThemeLine().CGColor;
@@ -207,6 +240,15 @@ static NSString *const kBrandDev  = @"@VNTool";
         }
         _aimFovSlider.minimumTrackTintColor = MDThemeAccent();
         _aimDistSlider.minimumTrackTintColor = MDThemeAccent();
+    }
+    if (_functionsCard) {
+        _functionsCard.backgroundColor = MDThemePanel();
+        _functionsCard.layer.borderColor = MDThemeLine().CGColor;
+        _functionsCard.layer.borderWidth = 1.0f;
+        NSArray *funcLabels = @[_silentLabel, _brutalLabel, _fakeNameLabel, _fastReloadLabel, _streamerLabel, _behindWallLabel];
+        for (UILabel *l in funcLabels) if (l) l.textColor = MDThemeText();
+        NSArray *funcSwitches = @[_silentSwitch, _brutalSwitch, _fakeNameSwitch, _fastReloadSwitch, _streamerSwitch, _behindWallSwitch];
+        for (UISwitch *s in funcSwitches) if (s) s.onTintColor = MDThemeAccent();
     }
     if (_footerLabel) _footerLabel.textColor = MDThemeMuted();
     if (self.tabBarController) MDThemeApplyToTabBar(self.tabBarController.tabBar);
@@ -270,6 +312,7 @@ static NSString *const kBrandDev  = @"@VNTool";
     _startButton.alpha = 1.0;
 }
 
+// Helper segment style
 static void MDSegmentStyle(UISegmentedControl *seg, CGFloat fontSize) {
     NSDictionary *attrs = @{
         NSForegroundColorAttributeName: [UIColor whiteColor],
@@ -280,6 +323,8 @@ static void MDSegmentStyle(UISegmentedControl *seg, CGFloat fontSize) {
     [seg setTitleTextAttributes:attrs forState:UIControlStateHighlighted];
     [seg setTitleTextAttributes:attrs forState:UIControlStateDisabled];
 }
+
+#pragma mark - buildUI
 
 - (void)buildUI {
     self.view.backgroundColor = MDThemeBg();
@@ -303,6 +348,7 @@ static void MDSegmentStyle(UISegmentedControl *seg, CGFloat fontSize) {
     _titleLabel.textColor = MDThemeText();
     [_contentView addSubview:_titleLabel];
 
+    // ─── Control card ───
     _controlCard = [self makeCard];
     [_contentView addSubview:_controlCard];
     _controlIconView = [[UIImageView alloc] initWithFrame:CGRectZero];
@@ -332,6 +378,7 @@ static void MDSegmentStyle(UISegmentedControl *seg, CGFloat fontSize) {
     [_startButton addTarget:self action:@selector(startButtonTapped:) forControlEvents:UIControlEventTouchUpInside];
     [_controlCard addSubview:_startButton];
 
+    // ─── Quick toggles ───
     _togglesCard = [self makeCard];
     [_contentView addSubview:_togglesCard];
     _aimbotLabel = [[UILabel alloc] initWithFrame:CGRectZero];
@@ -377,8 +424,12 @@ static void MDSegmentStyle(UISegmentedControl *seg, CGFloat fontSize) {
     _camValueLabel.text = [NSString stringWithFormat:@"%.0f", _camSlider.value];
     [_togglesCard addSubview:_camValueLabel];
 
+    // ══════════════════════════════════════════════════════════════
+    // AIM CARD
+    // ══════════════════════════════════════════════════════════════
     _aimCard = [self makeCard];
     [_contentView addSubview:_aimCard];
+
     _aimModeTitleLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     _aimModeTitleLabel.text = @"Chế độ Aim";
     _aimModeTitleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightSemibold];
@@ -472,6 +523,85 @@ static void MDSegmentStyle(UISegmentedControl *seg, CGFloat fontSize) {
         _aimFovValueLabel.hidden = YES;
     }
 
+    // ══════════════════════════════════════════════════════════════
+    // FUNCTIONS CARD — Silent / Brutal / FakeName / FastReload / Streamer / BehindWall
+    // ══════════════════════════════════════════════════════════════
+    _functionsCard = [self makeCard];
+    [_contentView addSubview:_functionsCard];
+
+    // Silent (Đạn ma)
+    _silentLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+    _silentLabel.text = @"Silent Aim (Đạn ma)";
+    _silentLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
+    _silentLabel.textColor = [UIColor whiteColor];
+    [_functionsCard addSubview:_silentLabel];
+    _silentSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
+    _silentSwitch.onTintColor = MDThemeAccent();
+    _silentSwitch.on = ESPPrefsBool(@"AimSilent", NO);
+    [_silentSwitch addTarget:self action:@selector(silentSwitchChanged:) forControlEvents:UIControlEventValueChanged];
+    [_functionsCard addSubview:_silentSwitch];
+
+    // Brutal (Speed)
+    _brutalLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+    _brutalLabel.text = @"Brutal (Speed)";
+    _brutalLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
+    _brutalLabel.textColor = [UIColor whiteColor];
+    [_functionsCard addSubview:_brutalLabel];
+    _brutalSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
+    _brutalSwitch.onTintColor = MDThemeAccent();
+    _brutalSwitch.on = ESPPrefsBool(@"Norecoil", NO);
+    [_brutalSwitch addTarget:self action:@selector(brutalSwitchChanged:) forControlEvents:UIControlEventValueChanged];
+    [_functionsCard addSubview:_brutalSwitch];
+
+    // FakeName (Đổi tên)
+    _fakeNameLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+    _fakeNameLabel.text = @"FakeName (Đổi tên)";
+    _fakeNameLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
+    _fakeNameLabel.textColor = [UIColor whiteColor];
+    [_functionsCard addSubview:_fakeNameLabel];
+    _fakeNameSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
+    _fakeNameSwitch.onTintColor = MDThemeAccent();
+    _fakeNameSwitch.on = ESPPrefsBool(@"SetName", NO);
+    [_fakeNameSwitch addTarget:self action:@selector(fakeNameSwitchChanged:) forControlEvents:UIControlEventValueChanged];
+    [_functionsCard addSubview:_fakeNameSwitch];
+
+    // FastReload
+    _fastReloadLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+    _fastReloadLabel.text = @"Fast Reload (Nạp nhanh)";
+    _fastReloadLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
+    _fastReloadLabel.textColor = [UIColor whiteColor];
+    [_functionsCard addSubview:_fastReloadLabel];
+    _fastReloadSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
+    _fastReloadSwitch.onTintColor = MDThemeAccent();
+    _fastReloadSwitch.on = ESPPrefsBool(@"FastReload", NO);
+    [_fastReloadSwitch addTarget:self action:@selector(fastReloadSwitchChanged:) forControlEvents:UIControlEventValueChanged];
+    [_functionsCard addSubview:_fastReloadSwitch];
+
+    // Streamer Mode
+    _streamerLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+    _streamerLabel.text = @"Streamer Mode (Ẩn Menu)";
+    _streamerLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
+    _streamerLabel.textColor = [UIColor whiteColor];
+    [_functionsCard addSubview:_streamerLabel];
+    _streamerSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
+    _streamerSwitch.onTintColor = MDThemeAccent();
+    _streamerSwitch.on = ESPPrefsBool(@"StreamerMode", NO);
+    [_streamerSwitch addTarget:self action:@selector(streamerSwitchChanged:) forControlEvents:UIControlEventValueChanged];
+    [_functionsCard addSubview:_streamerSwitch];
+
+    // Aim Behind Wall
+    _behindWallLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+    _behindWallLabel.text = @"Aim sau tường";
+    _behindWallLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
+    _behindWallLabel.textColor = [UIColor whiteColor];
+    [_functionsCard addSubview:_behindWallLabel];
+    _behindWallSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
+    _behindWallSwitch.onTintColor = MDThemeAccent();
+    _behindWallSwitch.on = ESPPrefsBool(@"AimBehindWall", NO);
+    [_behindWallSwitch addTarget:self action:@selector(behindWallSwitchChanged:) forControlEvents:UIControlEventValueChanged];
+    [_functionsCard addSubview:_behindWallSwitch];
+
+    // ─── Log card ───
     _logCard = [self makeCard];
     [_contentView addSubview:_logCard];
     _logTextView = [[UITextView alloc] initWithFrame:CGRectZero];
@@ -485,6 +615,7 @@ static void MDSegmentStyle(UISegmentedControl *seg, CGFloat fontSize) {
     _logTextView.text = @"[VN TOOL] ready.\nPress Bắt đầu to boot kernel.";
     [_logCard addSubview:_logTextView];
 
+    // ─── Version section ───
     _versionSectionLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     _versionSectionLabel.text = @"Lựa chọn phiên bản:";
     _versionSectionLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
@@ -513,6 +644,7 @@ static void MDSegmentStyle(UISegmentedControl *seg, CGFloat fontSize) {
     [_ffCard addTarget:self action:@selector(versionCardTapped:) forControlEvents:UIControlEventTouchUpInside];
     [_contentView addSubview:_ffCard];
 
+    // ─── Status card ───
     _statusCard = [self makeCard];
     [_contentView addSubview:_statusCard];
     _statusDot = [[UIView alloc] initWithFrame:CGRectZero];
@@ -533,6 +665,7 @@ static void MDSegmentStyle(UISegmentedControl *seg, CGFloat fontSize) {
     [_openGameButton addTarget:self action:@selector(openGameTapped:) forControlEvents:UIControlEventTouchUpInside];
     [_statusCard addSubview:_openGameButton];
 
+    // ─── License + Auth ───
     _licenseCard = [self makeCard];
     [_contentView addSubview:_licenseCard];
     _licenseTitleLabel = [[UILabel alloc] initWithFrame:CGRectZero];
@@ -561,6 +694,7 @@ static void MDSegmentStyle(UISegmentedControl *seg, CGFloat fontSize) {
     _authValueLabel.text = @"—";
     [_authCard addSubview:_authValueLabel];
 
+    // ─── Support ───
     _supportCard = [self makeCard];
     [_contentView addSubview:_supportCard];
     _supportTitleLabel = [[UILabel alloc] initWithFrame:CGRectZero];
@@ -582,6 +716,7 @@ static void MDSegmentStyle(UISegmentedControl *seg, CGFloat fontSize) {
     [_joinButton addTarget:self action:@selector(joinSupportTapped:) forControlEvents:UIControlEventTouchUpInside];
     [_supportCard addSubview:_joinButton];
 
+    // ─── Extra card ───
     _extraCard = [self makeCard];
     [_contentView addSubview:_extraCard];
     _autoCleanLabel = [[UILabel alloc] initWithFrame:CGRectZero];
@@ -604,6 +739,7 @@ static void MDSegmentStyle(UISegmentedControl *seg, CGFloat fontSize) {
     [_authorizationButton addTarget:self action:@selector(retryAuthorization:) forControlEvents:UIControlEventTouchUpInside];
     [_extraCard addSubview:_authorizationButton];
 
+    // ─── Footer ───
     _footerLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     NSString *appVer = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"];
     if (!appVer.length) appVer = @"1.0.0";
@@ -614,6 +750,8 @@ static void MDSegmentStyle(UISegmentedControl *seg, CGFloat fontSize) {
     _footerLabel.numberOfLines = 2;
     [_contentView addSubview:_footerLabel];
 }
+
+#pragma mark - Layout
 
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
@@ -630,6 +768,8 @@ static void MDSegmentStyle(UISegmentedControl *seg, CGFloat fontSize) {
     CGFloat y = insets.top + 52.0f;
     _titleLabel.frame = CGRectMake(xPad + 6, y, cardW - 12 - 80, 40);
     y = CGRectGetMaxY(_titleLabel.frame) + 14;
+
+    // Control
     CGFloat controlH = 86.0f;
     _controlCard.frame = CGRectMake(xPad, y, cardW, controlH);
     CGFloat iconSize = MIN(kMenuButtonSize, MIN(cardW * 0.42f, controlH * 0.85f));
@@ -641,6 +781,8 @@ static void MDSegmentStyle(UISegmentedControl *seg, CGFloat fontSize) {
     _controlTitleLabel.frame = CGRectMake(textX, 20, textW, 22);
     _controlSubtitleLabel.frame = CGRectMake(textX, 44, textW, 28);
     y = CGRectGetMaxY(_controlCard.frame) + 12;
+
+    // Quick toggles
     CGFloat togglesH = 176.0f;
     _togglesCard.frame = CGRectMake(xPad, y, cardW, togglesH);
     _aimbotLabel.frame = CGRectMake(16, 14, 200, 24);
@@ -652,6 +794,8 @@ static void MDSegmentStyle(UISegmentedControl *seg, CGFloat fontSize) {
     _camSlider.frame = CGRectMake(16, 128, cardW - 90, 30);
     _camValueLabel.frame = CGRectMake(cardW - 64, 130, 48, 24);
     y = CGRectGetMaxY(_togglesCard.frame) + 12;
+
+    // AIM card
     CGFloat aimCardH = 340.0f;
     _aimCard.frame = CGRectMake(xPad, y, cardW, aimCardH);
     CGFloat aimY = 12.0f;
@@ -679,12 +823,36 @@ static void MDSegmentStyle(UISegmentedControl *seg, CGFloat fontSize) {
     _aimDistSlider.frame = CGRectMake(16, aimY, aimInnerW, 30);
     aimY += 30;
     y = CGRectGetMaxY(_aimCard.frame) + 12;
+
+    // Functions card — 6 hàng
+    CGFloat funcH = 6 * 44.0f + 16.0f;
+    _functionsCard.frame = CGRectMake(xPad, y, cardW, funcH);
+    CGFloat rowY = 8.0f;
+    CGFloat swX = cardW - 68;
+    CGFloat rowH = 44.0f;
+    _silentLabel.frame        = CGRectMake(16, rowY + 10, cardW - 90, 24);
+    _silentSwitch.frame       = CGRectMake(swX, rowY + 6, 51, 31); rowY += rowH;
+    _brutalLabel.frame        = CGRectMake(16, rowY + 10, cardW - 90, 24);
+    _brutalSwitch.frame       = CGRectMake(swX, rowY + 6, 51, 31); rowY += rowH;
+    _fakeNameLabel.frame      = CGRectMake(16, rowY + 10, cardW - 90, 24);
+    _fakeNameSwitch.frame     = CGRectMake(swX, rowY + 6, 51, 31); rowY += rowH;
+    _fastReloadLabel.frame    = CGRectMake(16, rowY + 10, cardW - 90, 24);
+    _fastReloadSwitch.frame   = CGRectMake(swX, rowY + 6, 51, 31); rowY += rowH;
+    _streamerLabel.frame      = CGRectMake(16, rowY + 10, cardW - 90, 24);
+    _streamerSwitch.frame     = CGRectMake(swX, rowY + 6, 51, 31); rowY += rowH;
+    _behindWallLabel.frame    = CGRectMake(16, rowY + 10, cardW - 90, 24);
+    _behindWallSwitch.frame   = CGRectMake(swX, rowY + 6, 51, 31);
+    y = CGRectGetMaxY(_functionsCard.frame) + 12;
+
+    // Log
     CGFloat logH = 180.0f;
     _logCard.frame = CGRectMake(xPad, y, cardW, logH);
     _logTextView.frame = CGRectMake(10, 8, cardW - 20, logH - 16);
     y = CGRectGetMaxY(_logCard.frame) + 16;
+
     _versionSectionLabel.frame = CGRectMake(xPad + 4, y, cardW - 8, 20);
     y = CGRectGetMaxY(_versionSectionLabel.frame) + 10;
+
     CGFloat gap = 12.0f;
     CGFloat versionW = (cardW - gap) * 0.5f;
     CGFloat versionH = 128.0f;
@@ -696,12 +864,16 @@ static void MDSegmentStyle(UISegmentedControl *seg, CGFloat fontSize) {
     _ffMaxNameLabel.frame = CGRectMake(8, 90, versionW - 16, 24);
     _ffNameLabel.frame = CGRectMake(8, 90, versionW - 16, 24);
     y = CGRectGetMaxY(_ffMaxCard.frame) + 14;
+
+    // Status
     CGFloat statusH = 64.0f;
     _statusCard.frame = CGRectMake(xPad, y, cardW, statusH);
     _statusDot.frame = CGRectMake(16, 27, 10, 10);
     _openGameButton.frame = CGRectMake(cardW - 112, 15, 98, 34);
     _statusLabel.frame = CGRectMake(36, 18, cardW - 112 - 44, 28);
     y = CGRectGetMaxY(_statusCard.frame) + 12;
+
+    // License + Auth
     CGFloat halfW = (cardW - gap) * 0.5f;
     CGFloat halfH = 92.0f;
     _licenseCard.frame = CGRectMake(xPad, y, halfW, halfH);
@@ -711,12 +883,16 @@ static void MDSegmentStyle(UISegmentedControl *seg, CGFloat fontSize) {
     _authTitleLabel.frame = CGRectMake(14, 12, halfW - 28, 18);
     _authValueLabel.frame = CGRectMake(14, 40, halfW - 28, 36);
     y = CGRectGetMaxY(_licenseCard.frame) + 12;
+
+    // Support
     CGFloat supportH = 72.0f;
     _supportCard.frame = CGRectMake(xPad, y, cardW, supportH);
     _joinButton.frame = CGRectMake(cardW - 92, 19, 78, 34);
     _supportTitleLabel.frame = CGRectMake(16, 16, cardW - 120, 22);
     _supportSubtitleLabel.frame = CGRectMake(16, 40, cardW - 120, 18);
     y = CGRectGetMaxY(_supportCard.frame) + 12;
+
+    // Extra
     CGFloat extraH = 96.0f;
     _extraCard.frame = CGRectMake(xPad, y, cardW, extraH);
     _autoCleanLabel.frame = CGRectMake(16, 16, cardW - 90, 22);
@@ -725,11 +901,15 @@ static void MDSegmentStyle(UISegmentedControl *seg, CGFloat fontSize) {
     _authorizationLabel.frame = CGRectMake(16, 52, cardW - 150, 28);
     _authorizationButton.frame = CGRectMake(cardW - 132, 52, 116, 28);
     y = CGRectGetMaxY(_extraCard.frame) + 16;
+
     _footerLabel.frame = CGRectMake(xPad, y, cardW, 36);
     y = CGRectGetMaxY(_footerLabel.frame) + 24 + insets.bottom;
+
     _contentView.frame = CGRectMake(0, 0, contentW, MAX(y, height));
     _scrollView.contentSize = _contentView.bounds.size;
 }
+
+#pragma mark - Version
 
 - (void)versionCardTapped:(UIButton *)sender {
     BOOL pickMax = (sender.tag == 2);
@@ -766,6 +946,8 @@ static void MDSegmentStyle(UISegmentedControl *seg, CGFloat fontSize) {
     }];
 }
 
+#pragma mark - Toggle handlers
+
 - (void)autoCleanSwitchChanged:(UISwitch *)sender {
     ESPPrefsSetBool(@"AutoVarCleanBeforeHUD", sender.on);
     ESPPrefsSync();
@@ -792,6 +974,49 @@ static void MDSegmentStyle(UISegmentedControl *seg, CGFloat fontSize) {
     ESPPrefsSetFloat(@"CamPCValue", v);
     ESPSyncFromPrefs();
 }
+
+// ─── Function toggles (Silent / Brutal / FakeName / FastReload / Streamer / BehindWall) ───
+
+- (void)silentSwitchChanged:(UISwitch *)sender {
+    ESPPrefsSetBoolLive(@"AimSilent", sender.on);
+    ESPSyncFromPrefs();
+}
+
+- (void)brutalSwitchChanged:(UISwitch *)sender {
+    ESPPrefsSetBoolLive(@"Norecoil", sender.on);
+    if (sender.on) {
+        // Brutal ON → tắt Speed menu (tránh xung đột)
+        ESPPrefsSetBoolLive(@"Speed", NO);
+    }
+    ESPSyncFromPrefs();
+}
+
+- (void)fakeNameSwitchChanged:(UISwitch *)sender {
+    ESPPrefsSetBoolLive(@"SetName", sender.on);
+    ESPSyncFromPrefs();
+}
+
+- (void)fastReloadSwitchChanged:(UISwitch *)sender {
+    ESPPrefsSetBoolLive(@"FastReload", sender.on);
+    // Cần FastReloadSpeed > 1.0 mới có tác dụng
+    if (sender.on && ESPPrefsFloat(@"FastReloadSpeed", 1.0f) <= 1.0f) {
+        ESPPrefsSetFloat(@"FastReloadSpeed", 5.0f);
+    }
+    ESPSyncFromPrefs();
+}
+
+- (void)streamerSwitchChanged:(UISwitch *)sender {
+    ESPPrefsSetBoolLive(@"StreamerMode", sender.on);
+    ESPSyncFromPrefs();
+}
+
+- (void)behindWallSwitchChanged:(UISwitch *)sender {
+    ESPPrefsSetBoolLive(@"AimBehindWall", sender.on);
+    ESPSetAimBehindWallLive(sender.on);
+    ESPSyncFromPrefs();
+}
+
+#pragma mark - AIM handlers
 
 - (void)aimModeChanged:(UISegmentedControl *)sender {
     int idx = (int)sender.selectedSegmentIndex;
@@ -840,6 +1065,8 @@ static void MDSegmentStyle(UISegmentedControl *seg, CGFloat fontSize) {
     ESPPrefsSetFloat(@"AimDistance", v);
     ESPSyncFromPrefs();
 }
+
+#pragma mark - Start / Open game
 
 - (void)startButtonTapped:(UIButton *)sender {
     (void)sender;
@@ -911,6 +1138,8 @@ static void MDSegmentStyle(UISegmentedControl *seg, CGFloat fontSize) {
     }
 }
 
+#pragma mark - Log
+
 static void HomeVCBootLogSink(NSString *line) {
     dispatch_async(dispatch_get_main_queue(), ^{
         HomeViewController *vc = g_activeLogVC;
@@ -929,6 +1158,8 @@ static void HomeVCBootLogSink(NSString *line) {
     self.logTextView.text = snap;
     [self.logTextView scrollRangeToVisible:NSMakeRange(snap.length, 0)];
 }
+
+#pragma mark - refreshHUDState
 
 - (void)refreshHUDState {
     if (!self.isViewLoaded) return;
@@ -970,9 +1201,11 @@ static void HomeVCBootLogSink(NSString *line) {
         [_startButton setTitle:@"Bắt đầu" forState:UIControlStateNormal];
         _startButton.backgroundColor = [self accentGreen];
     }
-    static CFTimeInterval s_lastAimSync = 0;
-    if (now - s_lastAimSync > 1.0) {
-        s_lastAimSync = now;
+
+    // Sync segment + switch khi user đổi bên ModMenu
+    static CFTimeInterval s_lastSync = 0;
+    if (now - s_lastSync > 1.0) {
+        s_lastSync = now;
         int trig = (int)ESPPrefsFloat(@"TriggerMode", 0.0f);
         if (trig >= 0 && trig <= 3 && _aimModeSegment.selectedSegmentIndex != trig) {
             _aimModeSegment.selectedSegmentIndex = trig;
@@ -989,7 +1222,15 @@ static void HomeVCBootLogSink(NSString *line) {
             _aimFovSlider.hidden = hideFov;
             _aimFovValueLabel.hidden = hideFov;
         }
+        // Sync function switches
+        _silentSwitch.on     = ESPPrefsBool(@"AimSilent", NO);
+        _brutalSwitch.on     = ESPPrefsBool(@"Norecoil", NO);
+        _fakeNameSwitch.on   = ESPPrefsBool(@"SetName", NO);
+        _fastReloadSwitch.on = ESPPrefsBool(@"FastReload", NO);
+        _streamerSwitch.on   = ESPPrefsBool(@"StreamerMode", NO);
+        _behindWallSwitch.on = ESPPrefsBool(@"AimBehindWall", NO);
     }
 }
 
 @end
+
