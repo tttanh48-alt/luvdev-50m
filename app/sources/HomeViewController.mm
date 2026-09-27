@@ -57,7 +57,7 @@ static NSString *const kBrandDev  = @"@VNTool";
 @property (nonatomic, strong) UISlider *aimDistSlider;
 @property (nonatomic, strong) UILabel *aimDistValueLabel;
 
-// Functions card (Silent / Brutal / FakeName / FastReload / Streamer)
+// Functions card
 @property (nonatomic, strong) UIView *functionsCard;
 @property (nonatomic, strong) UILabel *silentLabel;
 @property (nonatomic, strong) UISwitch *silentSwitch;
@@ -114,7 +114,7 @@ static NSString *const kBrandDev  = @"@VNTool";
 @property (nonatomic, assign) CFTimeInterval pendingHUDEnableUntil;
 @property (nonatomic, assign) NSInteger hudRequestSerial;
 
-- (void)appendBootLog:(NSString *)line;
+- (void)appendBootLog:(NSString * _Nullable)line;
 - (void)refreshHUDState;
 @end
 
@@ -180,7 +180,8 @@ static NSString *const kBrandDev  = @"@VNTool";
     _controlCard.layer.borderWidth = 1.0f;
     _controlTitleLabel.textColor = MDThemeText();
     _controlSubtitleLabel.textColor = MDThemeMuted();
-    _startButton.backgroundColor = MDThemeAccent();
+    // Chuyển toàn bộ nút chính sang tone xanh dương/xanh ngọc dễ nhìn
+    _startButton.backgroundColor = MDThemeBlue();
     _versionSectionLabel.textColor = MDThemeMuted();
     _ffMaxCard.backgroundColor = MDThemePanel();
     _ffCard.backgroundColor = MDThemePanel();
@@ -190,7 +191,7 @@ static NSString *const kBrandDev  = @"@VNTool";
     _statusCard.layer.borderColor = MDThemeLine().CGColor;
     _statusCard.layer.borderWidth = 1.0f;
     _statusLabel.textColor = MDThemeText();
-    _openGameButton.backgroundColor = MDThemeOrange();
+    _openGameButton.backgroundColor = MDThemeBlue();
     _licenseCard.backgroundColor = MDThemePanel();
     _licenseCard.layer.borderColor = MDThemeLine().CGColor;
     _licenseCard.layer.borderWidth = 1.0f;
@@ -210,8 +211,8 @@ static NSString *const kBrandDev  = @"@VNTool";
     _extraCard.layer.borderColor = MDThemeLine().CGColor;
     _extraCard.layer.borderWidth = 1.0f;
     _autoCleanLabel.textColor = MDThemeText();
-    _autoCleanSwitch.onTintColor = MDThemeAccent();
-    [_authorizationButton setTitleColor:MDThemeAccent() forState:UIControlStateNormal];
+    _autoCleanSwitch.onTintColor = MDThemeBlue();
+    [_authorizationButton setTitleColor:MDThemeBlue() forState:UIControlStateNormal];
     _settingsBtn.backgroundColor = MDThemePanel2();
     _settingsBtn.layer.borderColor = MDThemeLine().CGColor;
     _settingsBtn.tintColor = MDThemeText();
@@ -230,16 +231,16 @@ static NSString *const kBrandDev  = @"@VNTool";
         _aimDistTitleLabel.textColor = MDThemeText();
         _aimFovValueLabel.textColor = MDThemeMuted();
         _aimDistValueLabel.textColor = MDThemeMuted();
-        _aimModeSegment.tintColor = MDThemeAccent();
-        _aimPosSegment.tintColor = MDThemeAccent();
-        _aimSphereSegment.tintColor = MDThemeAccent();
+        _aimModeSegment.tintColor = MDThemeBlue();
+        _aimPosSegment.tintColor = MDThemeBlue();
+        _aimSphereSegment.tintColor = MDThemeBlue();
         if (@available(iOS 13.0, *)) {
-            _aimModeSegment.selectedSegmentTintColor = MDThemeAccent();
-            _aimPosSegment.selectedSegmentTintColor = MDThemeAccent();
-            _aimSphereSegment.selectedSegmentTintColor = MDThemeAccent();
+            _aimModeSegment.selectedSegmentTintColor = MDThemeBlue();
+            _aimPosSegment.selectedSegmentTintColor = MDThemeBlue();
+            _aimSphereSegment.selectedSegmentTintColor = MDThemeBlue();
         }
-        _aimFovSlider.minimumTrackTintColor = MDThemeAccent();
-        _aimDistSlider.minimumTrackTintColor = MDThemeAccent();
+        _aimFovSlider.minimumTrackTintColor = MDThemeBlue();
+        _aimDistSlider.minimumTrackTintColor = MDThemeBlue();
     }
     if (_functionsCard) {
         _functionsCard.backgroundColor = MDThemePanel();
@@ -248,7 +249,7 @@ static NSString *const kBrandDev  = @"@VNTool";
         NSArray *funcLabels = @[_silentLabel, _brutalLabel, _fakeNameLabel, _fastReloadLabel, _streamerLabel, _behindWallLabel];
         for (UILabel *l in funcLabels) if (l) l.textColor = MDThemeText();
         NSArray *funcSwitches = @[_silentSwitch, _brutalSwitch, _fakeNameSwitch, _fastReloadSwitch, _streamerSwitch, _behindWallSwitch];
-        for (UISwitch *s in funcSwitches) if (s) s.onTintColor = MDThemeAccent();
+        for (UISwitch *s in funcSwitches) if (s) s.onTintColor = MDThemeBlue();
     }
     if (_footerLabel) _footerLabel.textColor = MDThemeMuted();
     if (self.tabBarController) MDThemeApplyToTabBar(self.tabBarController.tabBar);
@@ -305,14 +306,13 @@ static NSString *const kBrandDev  = @"@VNTool";
     _authorizationButton.enabled = NO;
     _licenseValueLabel.text = @"Unlimited";
     _authValueLabel.text = @"Hoạt động";
-    _authValueLabel.textColor = MDThemeAccent();
+    _authValueLabel.textColor = MDThemeBlue();
     _authorizationLabel.textColor = MDThemeText();
     _autoCleanSwitch.enabled = YES;
     _autoCleanLabel.alpha = 1.0;
     _startButton.alpha = 1.0;
 }
 
-// Helper segment style
 static void MDSegmentStyle(UISegmentedControl *seg, CGFloat fontSize) {
     NSDictionary *attrs = @{
         NSForegroundColorAttributeName: [UIColor whiteColor],
@@ -370,7 +370,7 @@ static void MDSegmentStyle(UISegmentedControl *seg, CGFloat fontSize) {
     _controlSubtitleLabel.numberOfLines = 2;
     [_controlCard addSubview:_controlSubtitleLabel];
     _startButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    _startButton.backgroundColor = [self accentGreen];
+    _startButton.backgroundColor = [self accentBlue];
     _startButton.layer.cornerRadius = 16.0f;
     _startButton.titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightBold];
     [_startButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
@@ -387,7 +387,7 @@ static void MDSegmentStyle(UISegmentedControl *seg, CGFloat fontSize) {
     _aimbotLabel.textColor = [UIColor whiteColor];
     [_togglesCard addSubview:_aimbotLabel];
     _aimbotSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
-    _aimbotSwitch.onTintColor = [self accentGreen];
+    _aimbotSwitch.onTintColor = [self accentBlue];
     _aimbotSwitch.on = ESPPrefsBool(@"Aimbot", NO);
     [_aimbotSwitch addTarget:self action:@selector(aimbotSwitchChanged:) forControlEvents:UIControlEventValueChanged];
     [_togglesCard addSubview:_aimbotSwitch];
@@ -397,17 +397,17 @@ static void MDSegmentStyle(UISegmentedControl *seg, CGFloat fontSize) {
     _espLabel.textColor = [UIColor whiteColor];
     [_togglesCard addSubview:_espLabel];
     _espSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
-    _espSwitch.onTintColor = [self accentGreen];
+    _espSwitch.onTintColor = [self accentBlue];
     _espSwitch.on = ESPPrefsBool(@"EnableESP", YES);
     [_espSwitch addTarget:self action:@selector(espSwitchChanged:) forControlEvents:UIControlEventValueChanged];
     [_togglesCard addSubview:_espSwitch];
     _camLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-    _camLabel.text = @"Camera Xa (CamPC)";
+    _camLabel.text = @"Camera Xa";
     _camLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightSemibold];
     _camLabel.textColor = [UIColor whiteColor];
     [_togglesCard addSubview:_camLabel];
     _camSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
-    _camSwitch.onTintColor = [self accentGreen];
+    _camSwitch.onTintColor = [self accentBlue];
     _camSwitch.on = ESPPrefsBool(@"CamPC", NO);
     [_camSwitch addTarget:self action:@selector(camSwitchChanged:) forControlEvents:UIControlEventValueChanged];
     [_togglesCard addSubview:_camSwitch];
@@ -415,7 +415,7 @@ static void MDSegmentStyle(UISegmentedControl *seg, CGFloat fontSize) {
     _camSlider.minimumValue = 0.0f;
     _camSlider.maximumValue = 150.0f;
     _camSlider.value = ESPPrefsFloat(@"CamPCValue", 30.0f);
-    _camSlider.minimumTrackTintColor = [self accentGreen];
+    _camSlider.minimumTrackTintColor = [self accentBlue];
     [_camSlider addTarget:self action:@selector(camSliderChanged:) forControlEvents:UIControlEventValueChanged];
     [_togglesCard addSubview:_camSlider];
     _camValueLabel = [[UILabel alloc] initWithFrame:CGRectZero];
@@ -424,9 +424,7 @@ static void MDSegmentStyle(UISegmentedControl *seg, CGFloat fontSize) {
     _camValueLabel.text = [NSString stringWithFormat:@"%.0f", _camSlider.value];
     [_togglesCard addSubview:_camValueLabel];
 
-    // ══════════════════════════════════════════════════════════════
-    // AIM CARD
-    // ══════════════════════════════════════════════════════════════
+    // ─── AIM card ───
     _aimCard = [self makeCard];
     [_contentView addSubview:_aimCard];
 
@@ -439,8 +437,8 @@ static void MDSegmentStyle(UISegmentedControl *seg, CGFloat fontSize) {
     _aimModeSegment.selectedSegmentIndex = (int)ESPPrefsFloat(@"TriggerMode", 0.0f);
     if (_aimModeSegment.selectedSegmentIndex < 0) _aimModeSegment.selectedSegmentIndex = 0;
     if (_aimModeSegment.selectedSegmentIndex > 3) _aimModeSegment.selectedSegmentIndex = 3;
-    _aimModeSegment.tintColor = MDThemeAccent();
-    if (@available(iOS 13.0, *)) _aimModeSegment.selectedSegmentTintColor = MDThemeAccent();
+    _aimModeSegment.tintColor = MDThemeBlue();
+    if (@available(iOS 13.0, *)) _aimModeSegment.selectedSegmentTintColor = MDThemeBlue();
     MDSegmentStyle(_aimModeSegment, 11.0);
     [_aimModeSegment addTarget:self action:@selector(aimModeChanged:) forControlEvents:UIControlEventValueChanged];
     [_aimCard addSubview:_aimModeSegment];
@@ -454,8 +452,8 @@ static void MDSegmentStyle(UISegmentedControl *seg, CGFloat fontSize) {
     _aimPosSegment.selectedSegmentIndex = (int)ESPPrefsFloat(@"AimPos", 0.0f);
     if (_aimPosSegment.selectedSegmentIndex < 0) _aimPosSegment.selectedSegmentIndex = 0;
     if (_aimPosSegment.selectedSegmentIndex > 2) _aimPosSegment.selectedSegmentIndex = 2;
-    _aimPosSegment.tintColor = MDThemeAccent();
-    if (@available(iOS 13.0, *)) _aimPosSegment.selectedSegmentTintColor = MDThemeAccent();
+    _aimPosSegment.tintColor = MDThemeBlue();
+    if (@available(iOS 13.0, *)) _aimPosSegment.selectedSegmentTintColor = MDThemeBlue();
     MDSegmentStyle(_aimPosSegment, 12.0);
     [_aimPosSegment addTarget:self action:@selector(aimPosChanged:) forControlEvents:UIControlEventValueChanged];
     [_aimCard addSubview:_aimPosSegment];
@@ -470,8 +468,8 @@ static void MDSegmentStyle(UISegmentedControl *seg, CGFloat fontSize) {
     if (sphereMode < 0) sphereMode = 0;
     if (sphereMode > 2) sphereMode = 2;
     _aimSphereSegment.selectedSegmentIndex = sphereMode;
-    _aimSphereSegment.tintColor = MDThemeAccent();
-    if (@available(iOS 13.0, *)) _aimSphereSegment.selectedSegmentTintColor = MDThemeAccent();
+    _aimSphereSegment.tintColor = MDThemeBlue();
+    if (@available(iOS 13.0, *)) _aimSphereSegment.selectedSegmentTintColor = MDThemeBlue();
     MDSegmentStyle(_aimSphereSegment, 12.0);
     [_aimSphereSegment addTarget:self action:@selector(aimSphereChanged:) forControlEvents:UIControlEventValueChanged];
     [_aimCard addSubview:_aimSphereSegment];
@@ -486,7 +484,7 @@ static void MDSegmentStyle(UISegmentedControl *seg, CGFloat fontSize) {
     _aimFovSlider.minimumValue = 10.0f;
     _aimFovSlider.maximumValue = 500.0f;
     _aimFovSlider.value = fovVal;
-    _aimFovSlider.minimumTrackTintColor = MDThemeAccent();
+    _aimFovSlider.minimumTrackTintColor = MDThemeBlue();
     [_aimFovSlider addTarget:self action:@selector(aimFovChanged:) forControlEvents:UIControlEventValueChanged];
     [_aimCard addSubview:_aimFovSlider];
     _aimFovValueLabel = [[UILabel alloc] initWithFrame:CGRectZero];
@@ -507,7 +505,7 @@ static void MDSegmentStyle(UISegmentedControl *seg, CGFloat fontSize) {
     _aimDistSlider.minimumValue = 10.0f;
     _aimDistSlider.maximumValue = 400.0f;
     _aimDistSlider.value = distVal;
-    _aimDistSlider.minimumTrackTintColor = MDThemeAccent();
+    _aimDistSlider.minimumTrackTintColor = MDThemeBlue();
     [_aimDistSlider addTarget:self action:@selector(aimDistChanged:) forControlEvents:UIControlEventValueChanged];
     [_aimCard addSubview:_aimDistSlider];
     _aimDistValueLabel = [[UILabel alloc] initWithFrame:CGRectZero];
@@ -523,80 +521,72 @@ static void MDSegmentStyle(UISegmentedControl *seg, CGFloat fontSize) {
         _aimFovValueLabel.hidden = YES;
     }
 
-    // ══════════════════════════════════════════════════════════════
-    // FUNCTIONS CARD — Silent / Brutal / FakeName / FastReload / Streamer / BehindWall
-    // ══════════════════════════════════════════════════════════════
+    // ─── Functions card (Đã xóa bỏ các tên chức năng phụ trong ngoặc) ───
     _functionsCard = [self makeCard];
     [_contentView addSubview:_functionsCard];
 
-    // Silent (Đạn ma)
     _silentLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-    _silentLabel.text = @"Silent Aim (Đạn ma)";
+    _silentLabel.text = @"Silent Aim";
     _silentLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
     _silentLabel.textColor = [UIColor whiteColor];
     [_functionsCard addSubview:_silentLabel];
     _silentSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
-    _silentSwitch.onTintColor = MDThemeAccent();
+    _silentSwitch.onTintColor = MDThemeBlue();
     _silentSwitch.on = ESPPrefsBool(@"AimSilent", NO);
     [_silentSwitch addTarget:self action:@selector(silentSwitchChanged:) forControlEvents:UIControlEventValueChanged];
     [_functionsCard addSubview:_silentSwitch];
 
-    // Brutal (Speed)
     _brutalLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-    _brutalLabel.text = @"Brutal (Speed)";
+    _brutalLabel.text = @"Brutal";
     _brutalLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
     _brutalLabel.textColor = [UIColor whiteColor];
     [_functionsCard addSubview:_brutalLabel];
     _brutalSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
-    _brutalSwitch.onTintColor = MDThemeAccent();
+    _brutalSwitch.onTintColor = MDThemeBlue();
     _brutalSwitch.on = ESPPrefsBool(@"Norecoil", NO);
     [_brutalSwitch addTarget:self action:@selector(brutalSwitchChanged:) forControlEvents:UIControlEventValueChanged];
     [_functionsCard addSubview:_brutalSwitch];
 
-    // FakeName (Đổi tên)
     _fakeNameLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-    _fakeNameLabel.text = @"FakeName (Đổi tên)";
+    _fakeNameLabel.text = @"Fake Name";
     _fakeNameLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
     _fakeNameLabel.textColor = [UIColor whiteColor];
     [_functionsCard addSubview:_fakeNameLabel];
     _fakeNameSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
-    _fakeNameSwitch.onTintColor = MDThemeAccent();
+    _fakeNameSwitch.onTintColor = MDThemeBlue();
     _fakeNameSwitch.on = ESPPrefsBool(@"SetName", NO);
     [_fakeNameSwitch addTarget:self action:@selector(fakeNameSwitchChanged:) forControlEvents:UIControlEventValueChanged];
     [_functionsCard addSubview:_fakeNameSwitch];
 
-    // FastReload
     _fastReloadLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-    _fastReloadLabel.text = @"Fast Reload (Nạp nhanh)";
+    _fastReloadLabel.text = @"Fast Reload";
     _fastReloadLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
     _fastReloadLabel.textColor = [UIColor whiteColor];
     [_functionsCard addSubview:_fastReloadLabel];
     _fastReloadSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
-    _fastReloadSwitch.onTintColor = MDThemeAccent();
+    _fastReloadSwitch.onTintColor = MDThemeBlue();
     _fastReloadSwitch.on = ESPPrefsBool(@"FastReload", NO);
     [_fastReloadSwitch addTarget:self action:@selector(fastReloadSwitchChanged:) forControlEvents:UIControlEventValueChanged];
     [_functionsCard addSubview:_fastReloadSwitch];
 
-    // Streamer Mode
     _streamerLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-    _streamerLabel.text = @"Streamer Mode (Ẩn Menu)";
+    _streamerLabel.text = @"Streamer Mode";
     _streamerLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
     _streamerLabel.textColor = [UIColor whiteColor];
     [_functionsCard addSubview:_streamerLabel];
     _streamerSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
-    _streamerSwitch.onTintColor = MDThemeAccent();
+    _streamerSwitch.onTintColor = MDThemeBlue();
     _streamerSwitch.on = ESPPrefsBool(@"StreamerMode", NO);
     [_streamerSwitch addTarget:self action:@selector(streamerSwitchChanged:) forControlEvents:UIControlEventValueChanged];
     [_functionsCard addSubview:_streamerSwitch];
 
-    // Aim Behind Wall
     _behindWallLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     _behindWallLabel.text = @"Aim sau tường";
     _behindWallLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
     _behindWallLabel.textColor = [UIColor whiteColor];
     [_functionsCard addSubview:_behindWallLabel];
     _behindWallSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
-    _behindWallSwitch.onTintColor = MDThemeAccent();
+    _behindWallSwitch.onTintColor = MDThemeBlue();
     _behindWallSwitch.on = ESPPrefsBool(@"AimBehindWall", NO);
     [_behindWallSwitch addTarget:self action:@selector(behindWallSwitchChanged:) forControlEvents:UIControlEventValueChanged];
     [_functionsCard addSubview:_behindWallSwitch];
@@ -608,10 +598,10 @@ static void MDSegmentStyle(UISegmentedControl *seg, CGFloat fontSize) {
     _logTextView.editable = NO;
     _logTextView.scrollEnabled = YES;
     _logTextView.showsHorizontalScrollIndicator = NO;
-    _logTextView.backgroundColor = [UIColor colorWithRed:0.02 green:0.05 blue:0.03 alpha:1.0];
+    _logTextView.backgroundColor = [UIColor colorWithRed:0.02 green:0.04 blue:0.08 alpha:1.0];
     _logTextView.layer.cornerRadius = 10.0f;
     _logTextView.font = [UIFont monospacedSystemFontOfSize:10 weight:UIFontWeightRegular];
-    _logTextView.textColor = [UIColor colorWithRed:0.55 green:0.95 blue:0.6 alpha:1.0];
+    _logTextView.textColor = [UIColor colorWithRed:0.5 green:0.8 blue:1.0 alpha:1.0];
     _logTextView.text = @"[VN TOOL] ready.\nPress Bắt đầu to boot kernel.";
     [_logCard addSubview:_logTextView];
 
@@ -657,7 +647,7 @@ static void MDSegmentStyle(UISegmentedControl *seg, CGFloat fontSize) {
     _statusLabel.text = @"Trạng thái · Game chưa chạy";
     [_statusCard addSubview:_statusLabel];
     _openGameButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    _openGameButton.backgroundColor = [self accentOrange];
+    _openGameButton.backgroundColor = [self accentBlue];
     _openGameButton.layer.cornerRadius = 14.0f;
     _openGameButton.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
     [_openGameButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
@@ -725,7 +715,7 @@ static void MDSegmentStyle(UISegmentedControl *seg, CGFloat fontSize) {
     _autoCleanLabel.textColor = [UIColor colorWithWhite:0.9f alpha:1.0f];
     [_extraCard addSubview:_autoCleanLabel];
     _autoCleanSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
-    _autoCleanSwitch.onTintColor = MDThemeAccent();
+    _autoCleanSwitch.onTintColor = MDThemeBlue();
     _autoCleanSwitch.on = ESPPrefsBool(@"AutoVarCleanBeforeHUD", NO);
     [_autoCleanSwitch addTarget:self action:@selector(autoCleanSwitchChanged:) forControlEvents:UIControlEventValueChanged];
     [_extraCard addSubview:_autoCleanSwitch];
@@ -824,7 +814,7 @@ static void MDSegmentStyle(UISegmentedControl *seg, CGFloat fontSize) {
     aimY += 30;
     y = CGRectGetMaxY(_aimCard.frame) + 12;
 
-    // Functions card — 6 hàng
+    // Functions card
     CGFloat funcH = 6 * 44.0f + 16.0f;
     _functionsCard.frame = CGRectMake(xPad, y, cardW, funcH);
     CGFloat rowY = 8.0f;
@@ -920,7 +910,7 @@ static void MDSegmentStyle(UISegmentedControl *seg, CGFloat fontSize) {
 
 - (void)updateVersionSelectionUI {
     BOOL isMax = GameTargetIsMax();
-    UIColor *selected = MDThemeAccent();
+    UIColor *selected = MDThemeBlue();
     _ffMaxCard.layer.borderWidth = 2.0f;
     _ffCard.layer.borderWidth = 2.0f;
     _ffMaxCard.layer.borderColor = (isMax ? selected : MDThemeLine()).CGColor;
@@ -975,8 +965,6 @@ static void MDSegmentStyle(UISegmentedControl *seg, CGFloat fontSize) {
     ESPSyncFromPrefs();
 }
 
-// ─── Function toggles (Silent / Brutal / FakeName / FastReload / Streamer / BehindWall) ───
-
 - (void)silentSwitchChanged:(UISwitch *)sender {
     ESPPrefsSetBoolLive(@"AimSilent", sender.on);
     ESPSyncFromPrefs();
@@ -985,7 +973,6 @@ static void MDSegmentStyle(UISegmentedControl *seg, CGFloat fontSize) {
 - (void)brutalSwitchChanged:(UISwitch *)sender {
     ESPPrefsSetBoolLive(@"Norecoil", sender.on);
     if (sender.on) {
-        // Brutal ON → tắt Speed menu (tránh xung đột)
         ESPPrefsSetBoolLive(@"Speed", NO);
     }
     ESPSyncFromPrefs();
@@ -998,7 +985,6 @@ static void MDSegmentStyle(UISegmentedControl *seg, CGFloat fontSize) {
 
 - (void)fastReloadSwitchChanged:(UISwitch *)sender {
     ESPPrefsSetBoolLive(@"FastReload", sender.on);
-    // Cần FastReloadSpeed > 1.0 mới có tác dụng
     if (sender.on && ESPPrefsFloat(@"FastReloadSpeed", 1.0f) <= 1.0f) {
         ESPPrefsSetFloat(@"FastReloadSpeed", 5.0f);
     }
@@ -1169,7 +1155,7 @@ static void HomeVCBootLogSink(NSString *line) {
     _gameMissingStreak = gameIsRunning ? 0 : _gameMissingStreak + 1;
     BOOL gameIsAvailable = gameIsRunning || _gameMissingStreak < 8;
     if (gameIsRunning) {
-        _statusDot.backgroundColor = [self accentGreen];
+        _statusDot.backgroundColor = [self accentBlue];
         NSString *name = GameTargetIsMax() ? @"Free Fire MAX" : @"Free Fire";
         _statusLabel.text = [NSString stringWithFormat:@"Trạng thái · %@ đang chạy", name];
     } else {
@@ -1199,10 +1185,9 @@ static void HomeVCBootLogSink(NSString *line) {
         _startButton.backgroundColor = [UIColor colorWithWhite:0.35 alpha:1.0];
     } else {
         [_startButton setTitle:@"Bắt đầu" forState:UIControlStateNormal];
-        _startButton.backgroundColor = [self accentGreen];
+        _startButton.backgroundColor = [self accentBlue];
     }
 
-    // Sync segment + switch khi user đổi bên ModMenu
     static CFTimeInterval s_lastSync = 0;
     if (now - s_lastSync > 1.0) {
         s_lastSync = now;
@@ -1222,7 +1207,6 @@ static void HomeVCBootLogSink(NSString *line) {
             _aimFovSlider.hidden = hideFov;
             _aimFovValueLabel.hidden = hideFov;
         }
-        // Sync function switches
         _silentSwitch.on     = ESPPrefsBool(@"AimSilent", NO);
         _brutalSwitch.on     = ESPPrefsBool(@"Norecoil", NO);
         _fakeNameSwitch.on   = ESPPrefsBool(@"SetName", NO);
@@ -1233,4 +1217,3 @@ static void HomeVCBootLogSink(NSString *line) {
 }
 
 @end
-
