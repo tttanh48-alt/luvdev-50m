@@ -2358,7 +2358,13 @@ extern "C" void ToggleSpeedX50Safe(bool enable) {
         mach_port_deallocate(mach_task_self(), tk);
     });
 }
-
+// ============================================================
+// Wrapper tương thích ModMenuViewController.mm
+// (gọi ToggleSpeedX50 → chuyển sang bản Safe)
+// ============================================================
+extern "C" void ToggleSpeedX50(bool enable) {
+    ToggleSpeedX50Safe(enable);
+}
 // ============================================================
 // esp.mm — Part 4/4
 // renderESPWithBuffers + getters + prefs + end
