@@ -1534,7 +1534,7 @@ void EnableCamPC(uint64_t localPlayerPawn, bool isEnabled, float campcValue);
 uint64_t Moudule_Base = -1;
 int g_PlayerDrawIndex = 1;
 
-bool isESP = Vars.ESP;  // ✅ Use Vars.ESP flag
+bool isESP = YES;   // ✅ Use Vars.ESP flag
 bool isESP2 = NO; 
 bool isBox = YES; bool isBone = YES; bool isHealth = YES;
 int boxMode = 0; 
