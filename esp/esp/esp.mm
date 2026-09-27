@@ -1,3 +1,8 @@
+// ============================================================
+// esp.mm — Part 1/8
+// Header + extern + forward decl + globals
+// ============================================================
+
 #import "esp.h"
 #import "ESPPrefs.h"
 #import "GameOffsets.h"
@@ -60,6 +65,7 @@ extern "C" {
 
 extern int GetGameProcesspid(char *name);
 
+// ---------- Forward declarations ----------
 void ClearProBoxScreenForPawn(uint64_t pawn);
 
 static inline bool IsZeroVec(const Vector3 &v);
@@ -80,6 +86,7 @@ bool get_IsVisible(uint64_t player);
 bool get_IsFPPVisible(uint64_t player);
 static inline uint32_t get_VisibleFlags(uint64_t player);
 
+// ---------- Silent aim state ----------
 bool isAimBehindWall = NO;
 
 static void SilentAimClearTarget(void);
@@ -112,19 +119,28 @@ static inline void AimVisFrameBegin(void) {
     g_aimVisPvsTrue = 0;
 }
 
+// ---------- Constants ----------
 static const uint64_t kGmpHitPointOff  = 0x28;
 static const uint64_t kGmpOriginOff    = 0x4C;
+static const uint64_t kSilentDirOff    = 0x40;
+static const uint64_t kSilentOriginOff = 0x4C;
 
 static inline uint64_t kLastAimingTargetFromWeaponOff(void) {
     uint64_t off = kLastAimingTargetFromWeapon;
     return off ? off : (GameTargetIsMax() ? 0xDE8ull : 0xDE0ull);
 }
 
+// ---------- Weapon raycast ----------
 struct GameWeaponRaycast {
     bool valid = false;
     Vector3 origin{};
     Vector3 hit{};
 };
+
+// ============================================================
+// esp.mm — Part 2/8
+// Raycast + wall check + visibility helpers
+// ============================================================
 
 static inline GameWeaponRaycast SampleLocalWeaponRaycast(uint64_t localPawn, const Vector3 &fallbackOrigin) {
     GameWeaponRaycast out;
@@ -266,11 +282,17 @@ static inline bool AimTargetVisibleForWallOff(uint64_t player) {
     return true;
 }
 
-// ⚠️ FIX: Silent độc lập với wall — luôn cho phép.
+// Silent luôn cho phép, độc lập wall
 static inline bool AimTargetVisibleStrictForSilent(uint64_t player) {
     (void)player;
     return true;
 }
+
+// ============================================================
+// esp.mm — Part 3/8
+// Position resolve helpers
+// ============================================================
+
 static inline Vector3 tryTransformPos(uint64_t nodeOrTf) {
     if (!isVaildPtr(nodeOrTf)) return Vector3{0, 0, 0};
     Vector3 p = getPositionExt(nodeOrTf);
@@ -517,6 +539,11 @@ static inline Vector3 ResolvePawnWorldPosAny(uint64_t pawn) {
     return Vector3{0, 0, 0};
 }
 
+// ============================================================
+// esp.mm — Part 4/8
+// Head/hip resolve + AimLookAtHeadLive
+// ============================================================
+
 static inline Vector3 ResolveHeadWorldPosTracked(uint64_t pawn);
 static inline Vector3 ResolveHipWorldPosTracked(uint64_t pawn);
 
@@ -590,6 +617,7 @@ static inline Vector3 AimCameraOrigin(uint64_t localPawn, const Vector3 &fallbac
     return fallback;
 }
 
+// ---------- Silent aim thread-safe state ----------
 static std::mutex        g_silentMtx;
 static std::atomic<bool> g_silentKeepRunning{false};
 static std::thread       g_silentThread;
@@ -601,9 +629,6 @@ static uint64_t          g_silentLocalPlayer = 0;
 static int               g_silentAimPosMode = 0;
 static uint64_t          g_lastAimingInfo = 0;
 static uint64_t          g_silentCachedInfo = 0;
-
-static const uint64_t kSilentDirOff    = 0x40;
-static const uint64_t kSilentOriginOff = 0x4C;
 
 static inline void SilentFillPrimaryOnly(uint64_t *out, int *outCount) {
     out[0] = kHitObjectInfo;
@@ -743,6 +768,7 @@ static inline void AimSyncFireHit(uint64_t localPawn, const Vector3 &fromLoc, co
     (void)SilentForcePrimary(localPawn, fromLoc, targetPos);
 }
 
+// ---------- Silent thread — AN TOÀN, có sleep, có stop flag ----------
 static void SilentAimThread(uint64_t localPlayer) {
     while (g_silentKeepRunning.load(std::memory_order_relaxed)) {
         bool hasTarget = false;
@@ -760,7 +786,6 @@ static void SilentAimThread(uint64_t localPlayer) {
             enemy = g_silentLockedEnemy;
             posMode = g_silentAimPosMode;
         }
-        // ⚠️ FIX: Bỏ wall-off strict gate — silent độc lập.
         if (hasTarget && isVaildPtr(lp)) {
             if (isVaildPtr(enemy)) {
                 Vector3 live = ResolveSilentAimWorldPos(enemy, posMode);
@@ -771,20 +796,21 @@ static void SilentAimThread(uint64_t localPlayer) {
                 }
             }
             if (!IsZeroVec(targetPos)) {
-                for (int i = 0; i < 10; i++) {
+                // Giảm từ 10 → 2 để tránh write quá nhiều
+                for (int i = 0; i < 2; i++) {
                     SilentForcePrimary(lp, fromLoc, targetPos);
                 }
             }
         } else {
             g_lastAimingInfo = 0;
         }
-        std::this_thread::yield();
+        // Sleep 2ms — tránh CPU 100% → tránh tắt nguồn do nhiệt
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
 }
 
 static void SilentAimSetTarget(uint64_t localPlayer, uint64_t enemy, const Vector3 &bonePos, const Vector3 &fromLoc, int posMode) {
     if (!isVaildPtr(localPlayer) || IsZeroVec(bonePos)) return;
-    // ⚠️ FIX: Bỏ wall-off strict gate — silent độc lập.
     if (posMode < 0) posMode = 0;
     if (posMode > 2) posMode = 2;
     {
@@ -834,83 +860,23 @@ static void SilentAimStop(void) {
     g_silentAimPosMode = 0;
 }
 
-static std::mutex        g_aimLockMtx;
-static std::atomic<bool> g_aimLockRunning{false};
-static std::thread       g_aimLockThread;
-static bool              g_aimLockActive = false;
-static uint64_t          g_aimLockLocal = 0;
-static Quaternion        g_aimLockQuat{};
-static bool              g_aimLockHaveQuat = false;
-
-static void AimLockThreadMain(void) {
-    while (g_aimLockRunning.load(std::memory_order_relaxed)) {
-        bool active = false;
-        bool haveQ = false;
-        uint64_t lp = 0;
-        Quaternion q{};
-        {
-            std::lock_guard<std::mutex> lk(g_aimLockMtx);
-            active = g_aimLockActive;
-            haveQ = g_aimLockHaveQuat;
-            lp = g_aimLockLocal;
-            q = g_aimLockQuat;
-        }
-        if (active && haveQ && isVaildPtr(lp)) {
-            write_aim_rotations(lp, q);
-        }
-        if (active) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(4));
-        } else {
-            std::this_thread::sleep_for(std::chrono::milliseconds(12));
-        }
-    }
-}
-
+// ---------- Aim lock thread ĐÃ BỎ HOÀN TOÀN ----------
+// Ghi rotation chỉ trong updateFrame, không dùng thread riêng.
+// => Giảm 1500 write/giây, tránh panic do VM pressure.
 static void AimLockSetQuat(uint64_t localPlayer, const Quaternion &q) {
-    if (!isVaildPtr(localPlayer)) return;
-    float n = q.x*q.x + q.y*q.y + q.z*q.z + q.w*q.w;
-    if (!(n > 0.0001f) || isnan(n)) return;
-    {
-        std::lock_guard<std::mutex> lk(g_aimLockMtx);
-        g_aimLockActive = true;
-        g_aimLockLocal = localPlayer;
-        g_aimLockQuat = Quaternion::Normalized(q);
-        g_aimLockHaveQuat = true;
-    }
-    if (!g_aimLockRunning.load(std::memory_order_relaxed)) {
-        g_aimLockRunning = true;
-        if (g_aimLockThread.joinable()) {
-            try { g_aimLockThread.join(); } catch (...) {}
-        }
-        g_aimLockThread = std::thread(AimLockThreadMain);
-    }
+    (void)localPlayer; (void)q;
+    // No-op — giữ API cho tương thích
 }
+static void AimLockSet(uint64_t localPlayer, uint64_t enemy, int posMode, float dist, const Vector3 &fromLoc) {
+    (void)localPlayer; (void)enemy; (void)posMode; (void)dist; (void)fromLoc;
+}
+static void AimLockClear(void) {}
+static void AimLockStop(void) {}
 
-static void AimLockSet(uint64_t localPlayer, uint64_t /*enemy*/, int /*posMode*/, float /*dist*/, const Vector3 & /*fromLoc*/) {
-    if (!isVaildPtr(localPlayer)) return;
-    std::lock_guard<std::mutex> lk(g_aimLockMtx);
-    g_aimLockActive = g_aimLockHaveQuat;
-    g_aimLockLocal = localPlayer;
-}
-
-static void AimLockClear(void) {
-    std::lock_guard<std::mutex> lk(g_aimLockMtx);
-    g_aimLockActive = false;
-    g_aimLockHaveQuat = false;
-}
-
-static void AimLockStop(void) {
-    g_aimLockRunning = false;
-    {
-        std::lock_guard<std::mutex> lk(g_aimLockMtx);
-        g_aimLockActive = false;
-        g_aimLockHaveQuat = false;
-        g_aimLockLocal = 0;
-    }
-    if (g_aimLockThread.joinable()) {
-        try { g_aimLockThread.join(); } catch (...) {}
-    }
-}
+// ============================================================
+// esp.mm — Part 5/8
+// Mono string + prefs sync + geometry buffers
+// ============================================================
 
 task_t g_target_task = 0;
 
@@ -918,10 +884,13 @@ uint64_t AllocateMonoString(task_t task, uint64_t originalStrPtr, NSString *nsSt
     if (!task || !isVaildPtr(originalStrPtr) || !nsStr) return 0;
     uint64_t klass = ReadAddr<uint64_t>(originalStrPtr);
     if (!isVaildPtr(klass)) return 0;
-    mach_vm_address_t newAlloc = 0;
     NSUInteger len = nsStr.length;
+    // Guard: nickname dài quá → tránh alloc lớn → tránh panic
+    if (len == 0 || len > 64) return 0;
+    mach_vm_address_t newAlloc = 0;
     mach_vm_size_t size = 0x14 + (len * 2) + 2;
     if (mach_vm_allocate(task, &newAlloc, size, VM_FLAGS_ANYWHERE) != KERN_SUCCESS) return 0;
+    if (!isVaildPtr((uint64_t)newAlloc)) return 0;
     WriteAddr<uint64_t>(newAlloc, klass);
     WriteAddr<uint64_t>(newAlloc + 0x8, 0);
     WriteAddr<int32_t>(newAlloc + 0x10, (int32_t)len);
@@ -966,6 +935,7 @@ static inline bool IsZeroVec(const Vector3 &v) {
     return v.x == 0.0f && v.y == 0.0f && v.z == 0.0f;
 }
 
+// ---------- Motion track ----------
 struct AimMotionTrack {
     uint64_t pawn = 0;
     Vector3 lastHip = {0, 0, 0};
@@ -1206,958 +1176,322 @@ static inline Vector3 AimLookAtHeadLive(uint64_t localPawn, uint64_t targetPawn,
         }
     }
     write_aim_rotations(localPawn, outQ);
-    write_aim_rotations(localPawn, outQ);
     AimSyncFireHit(localPawn, from, aimed);
-    static int s_lookLiveLog = 0;
-    if (++s_lookLiveLog % 60 == 1) {
-        NSLog(@"[AIM] AimLookAtHeadLive: target=0x%llx, bone=(%.1f, %.1f, %.1f), dist=%.1f, mode=%d",
-              (unsigned long long)targetPawn, bone.x, bone.y, bone.z, distanceMeters, aimPosMode);
-    }
     if (outLastAim) *outLastAim = aimed;
     return aimed;
 }
 
-Quaternion GetRotationToLocation(Vector3 targetLocation, float y_bias, Vector3 myLoc);
-void set_aim(uint64_t player, Quaternion rotation, float speed, int mode, bool forceInstant);
-void set_aim_legit(uint64_t player, Quaternion rotation, float targetDistance);
-void update_aim_assist_legit_tuning(bool enable);
-bool get_IsBot(uint64_t player);
-bool get_IsKnockedDown(uint64_t player);
-bool get_IsBeingRescued(uint64_t player);
-bool get_IsFiring(uint64_t player);
-bool get_IsScoping(uint64_t player);
-bool get_IsVisible(uint64_t player);
-bool get_IsVisibleByFlag(uint64_t player, uint32_t flag);
-bool get_IsFPPVisible(uint64_t player);
-static inline uint32_t get_VisibleFlags(uint64_t player);
-void EnableCamPC(uint64_t localPlayerPawn, bool isEnabled, float campcValue);
+// ============================================================
+// esp.mm — Part 5/8
+// Mono string + prefs sync + geometry buffers
+// ============================================================
 
-uint64_t Moudule_Base = -1;
-int g_PlayerDrawIndex = 1;
+task_t g_target_task = 0;
 
-bool isESP = YES;
-bool isESP2 = NO;
-bool isBox = YES; bool isBone = YES; bool isHealth = YES;
-int boxMode = 0;
-bool isName = YES; bool isDis = YES; bool isLine = YES;
-bool isEspBot = NO; bool isWeapon = NO; bool isCount = YES;
-bool isAlert360 = NO;
-bool isAlertNum = NO;
-bool Norecoil = NO;
-bool isSpeed = NO;
-float speedvalue = 1.0f;
-float moveSpeedScale = 1.0f;
-bool isShowFovCircle = YES;
-bool isEspCheckVisible = NO;
-bool isAimIgnoreBot = NO; bool isAimIgnoreKnock = NO;
-bool isAimRage = NO; bool isFastReload = NO;
-bool isAimLegit = NO;
-float fastReloadSpeed = 1.0f;
-
-bool isCamPC = NO; float camPCValue = 30.0f;
-static uint64_t s_lastFollowCameraObj = 0;
-
-bool isAimbot = NO; bool isAimAssist = NO;
-bool isAimSilent = NO;
-int aimSphereMode = 0;
-int triggerMode = 0; int aimPosition = 0;
-int aimTargetMode = 0; float aimFov = 150.0f;
-float aimDistance = 200.0f; float aimSpeed = 1.0f;
-int aimMode = 1;
-
-bool isStreamerMode = NO;
-
-float espDistanceLimit = 150.0f;
-float boxThick = 1.0f;
-float boxR = 0.0f, boxG = 1.0f, boxB = 1.0f;
-int boxColorMode = 0;
-float boneThick = 1.2f;
-float boneR = 0.0f, boneG = 1.0f, boneB = 1.0f;
-int boneColorMode = 0;
-float lineThick = 1.0f;
-float lineR = 0.0f, lineG = 1.0f, lineB = 1.0f;
-int lineColorMode = 0;
-float fovThick = 0.6f;
-float fovR = 1.0f, fovG = 1.0f, fovB = 0.0f;
-int fovColorMode = 0;
-float aimAssistThick = 1.5f;
-float aimAssistR = 0.0f, aimAssistG = 1.0f, aimAssistB = 1.0f;
-
-static inline void ESPRainbowRGB(float phaseOffset, float *outR, float *outG, float *outB) {
-    float h = fmodf((float)CACurrentMediaTime() * 0.45f + phaseOffset, 1.0f);
-    if (h < 0.0f) h += 1.0f;
-    float s = 1.0f, v = 1.0f;
-    float c = v * s;
-    float x = c * (1.0f - fabsf(fmodf(h * 6.0f, 2.0f) - 1.0f));
-    float m = v - c;
-    float r = 0, g = 0, b = 0;
-    float h6 = h * 6.0f;
-    if (h6 < 1.0f)      { r = c; g = x; b = 0; }
-    else if (h6 < 2.0f) { r = x; g = c; b = 0; }
-    else if (h6 < 3.0f) { r = 0; g = c; b = x; }
-    else if (h6 < 4.0f) { r = 0; g = x; b = c; }
-    else if (h6 < 5.0f) { r = x; g = 0; b = c; }
-    else                { r = c; g = 0; b = x; }
-    *outR = r + m;
-    *outG = g + m;
-    *outB = b + m;
-}
-
-static inline void ESPResolveDrawColor(int mode, float baseR, float baseG, float baseB,
-                                       float phaseOffset, float *outR, float *outG, float *outB) {
-    if (mode == 1) {
-        ESPRainbowRGB(phaseOffset, outR, outG, outB);
-    } else {
-        *outR = baseR;
-        *outG = baseG;
-        *outB = baseB;
+uint64_t AllocateMonoString(task_t task, uint64_t originalStrPtr, NSString *nsStr) {
+    if (!task || !isVaildPtr(originalStrPtr) || !nsStr) return 0;
+    uint64_t klass = ReadAddr<uint64_t>(originalStrPtr);
+    if (!isVaildPtr(klass)) return 0;
+    NSUInteger len = nsStr.length;
+    // Guard: nickname dài quá → tránh alloc lớn → tránh panic
+    if (len == 0 || len > 64) return 0;
+    mach_vm_address_t newAlloc = 0;
+    mach_vm_size_t size = 0x14 + (len * 2) + 2;
+    if (mach_vm_allocate(task, &newAlloc, size, VM_FLAGS_ANYWHERE) != KERN_SUCCESS) return 0;
+    if (!isVaildPtr((uint64_t)newAlloc)) return 0;
+    WriteAddr<uint64_t>(newAlloc, klass);
+    WriteAddr<uint64_t>(newAlloc + 0x8, 0);
+    WriteAddr<int32_t>(newAlloc + 0x10, (int32_t)len);
+    for (NSUInteger i = 0; i < len; i++) {
+        unichar c = [nsStr characterAtIndex:i];
+        WriteAddr<uint16_t>(newAlloc + 0x14 + (i * 2), (uint16_t)c);
     }
+    WriteAddr<uint16_t>(newAlloc + 0x14 + (len * 2), 0);
+    return newAlloc;
 }
 
-static const int kAimLockMaxLostFrames = 4;
-
-struct PlayerCache {
-    uint64_t pawn = 0;
-    bool isBot = false;
-    bool isKnocked = false;
-    int curHP = 0;
-    int maxHP = 0;
-    bool isFPP = false;
-    bool isCamVis = false;
-    bool isPvsVis = false;
-    bool isTrueVis = false;
-    int visGoodFrames = 0;
-    int frame = 0;
-};
-
-static PlayerCache g_playerCache[96];
-static int g_cacheFrameCounter = 0;
-
-struct PosTrack {
-    uint64_t pawn = 0;
-    Vector3 headSmoothed{};
-    Vector3 hipSmoothed{};
-    Vector3 lastHeadRaw{};
-    Vector3 lastHipRaw{};
-    Vector3 headVel{};
-    Vector3 hipVel{};
-    CFTimeInterval lastHeadT = 0;
-    CFTimeInterval lastHipT = 0;
-    int headSrc = 0;
-    int hipSrc = 0;
-    int headSrcHold = 0;
-    int hipSrcHold = 0;
-    int frame = 0;
-    bool hasHead = false;
-    bool hasHip = false;
-    bool isBot = false;
-    int deadUntilFrame = 0;
-    float bodyLen = 0.f;
-    int bodyLenHold = 0;
-    bool wasMounted = false;
-    int lastHeadSrcDisp = 0;
-    int lastHipSrcDisp = 0;
-};
-static PosTrack g_posTrack[96];
-
-static inline int PosTrackSlot(uint64_t pawn) {
-    uint64_t x = pawn ^ (pawn >> 17) ^ (pawn << 7);
-    return (int)(x % 96ull);
-}
-
-static inline int PlayerCacheSlot(uint64_t pawn) {
-    return PosTrackSlot(pawn);
-}
-
-struct EspPawnSnap {
-    uint64_t pawn = 0;
-    Vector3 head{};
-    Vector3 hip{};
-    Vector3 aimPos{};
-    float dis = 0.f;
-    int curHP = 0;
-    int maxHP = 200;
-    bool isBot = false;
-    bool isKnocked = false;
-    bool treatAsVehicle = false;
-    bool canAim = false;
-    bool wantDraw = false;
-};
-
-static inline Vector3 TrackAndExtrapolate(Vector3 raw, Vector3 &lastRaw, Vector3 &vel,
-                                          CFTimeInterval &lastT, bool &has, float leadSec) {
-    if (!looksLikeWorldPos(raw)) {
-        has = false;
-        return Vector3{0, 0, 0};
+NSString* External_ReadNickname(uint64_t playerObj) {
+    if (!isVaildPtr(playerObj)) return nil;
+    uint64_t strPtr = ReadAddr<uint64_t>(playerObj + (uint64_t)kNickname);
+    if (!isVaildPtr(strPtr)) return nil;
+    int32_t length = ReadAddr<int32_t>(strPtr + 0x10);
+    if (length <= 0 || length > 128) return nil;
+    std::vector<uint16_t> buf(length);
+    for (int i = 0; i < length; i++) {
+        buf[i] = ReadAddr<uint16_t>(strPtr + 0x14 + (i * 2));
     }
+    return [NSString stringWithCharacters:(const unichar*)buf.data() length:length];
+}
+
+NSString *GenerateRainbowString(NSString *baseStr, int tickOffset) {
+    NSArray *hexColors = @[@"FFFF00", @"00FF00"];
+    NSMutableString *result = [NSMutableString string];
+    NSString *cleanBase = [baseStr stringByReplacingOccurrencesOfString:@"\\[.*?\\]" withString:@"" options:NSRegularExpressionSearch range:NSMakeRange(0, baseStr.length)];
+    for (NSUInteger i = 0; i < cleanBase.length; i++) {
+        unichar c = [cleanBase characterAtIndex:i];
+        if (c == ' ') {
+            [result appendFormat:@" "];
+        } else {
+            int colorIdx = (i + tickOffset) % hexColors.count;
+            [result appendFormat:@"[%@]%C", hexColors[colorIdx], c];
+        }
+    }
+    return result;
+}
+
+static inline bool IsZeroVec(const Vector3 &v) {
+    return v.x == 0.0f && v.y == 0.0f && v.z == 0.0f;
+}
+
+// ---------- Motion track ----------
+struct AimMotionTrack {
+    uint64_t pawn = 0;
+    Vector3 lastHip = {0, 0, 0};
+    Vector3 lastHead = {0, 0, 0};
+    Vector3 vel = {0, 0, 0};
+    Vector3 smoothHead = {0, 0, 0};
+    CFTimeInterval lastT = 0;
+    bool valid = false;
+};
+
+static AimMotionTrack g_aimMotion[96];
+
+static AimMotionTrack *AimMotionSlot(uint64_t pawn) {
+    if (pawn == 0) return nullptr;
+    int slotIdx = PosTrackSlot(pawn);
+    AimMotionTrack *slot = &g_aimMotion[slotIdx];
+    if (slot->pawn != pawn) {
+        *slot = AimMotionTrack{};
+        slot->pawn = pawn;
+    }
+    return slot;
+}
+
+static Vector3 AimTrackAndLeadEx(uint64_t pawn, Vector3 bodyPos, float distanceMeters, bool lockYToBody, bool bulletLead) {
+    AimMotionTrack *tr = AimMotionSlot(pawn);
+    if (!tr) return bodyPos;
+    if (!looksLikeWorldPos(bodyPos)) return bodyPos;
+    Vector3 hip = getPositionExt(getHip(pawn));
+    Vector3 root = ReadPlayerRootTransform(pawn);
+    Vector3 motionAnchor = bodyPos;
+    if (looksLikeWorldPos(root) && !get_IsBot(pawn)) motionAnchor = root;
+    else if (looksLikeWorldPos(hip) && !IsZeroVec(hip)) motionAnchor = hip;
     const CFTimeInterval now = CACurrentMediaTime();
-    if (!has || lastT <= 0.0) {
-        lastRaw = raw;
-        vel = Vector3{0, 0, 0};
-        lastT = now;
-        has = true;
-        return raw;
+    if (!tr->valid || tr->lastT <= 0.0) {
+        tr->lastHip = motionAnchor;
+        tr->lastHead = bodyPos;
+        tr->smoothHead = bodyPos;
+        tr->vel = {0, 0, 0};
+        tr->lastT = now;
+        tr->valid = true;
+        return bodyPos;
     }
-    float dt = (float)(now - lastT);
+    float dt = (float)(now - tr->lastT);
     if (dt < 0.0005f) dt = 0.0005f;
-    if (dt > 0.18f) {
-        lastRaw = raw;
-        vel = Vector3{0, 0, 0};
-        lastT = now;
-        return raw;
+    if (dt > 0.12f) {
+        tr->lastHip = motionAnchor;
+        tr->lastHead = bodyPos;
+        tr->smoothHead = bodyPos;
+        tr->vel = {0, 0, 0};
+        tr->lastT = now;
+        return bodyPos;
     }
+    Vector3 instHip = {
+        (motionAnchor.x - tr->lastHip.x) / dt,
+        0.f,
+        (motionAnchor.z - tr->lastHip.z) / dt
+    };
+    Vector3 instBody = {
+        (bodyPos.x - tr->lastHead.x) / dt,
+        0.f,
+        (bodyPos.z - tr->lastHead.z) / dt
+    };
     Vector3 inst = {
-        (raw.x - lastRaw.x) / dt,
-        (raw.y - lastRaw.y) / dt,
-        (raw.z - lastRaw.z) / dt
+        instHip.x * 0.70f + instBody.x * 0.30f,
+        0.f,
+        instHip.z * 0.70f + instBody.z * 0.30f
     };
-    float instSp = sqrtf(inst.x * inst.x + inst.z * inst.z);
-    float a = 0.62f + fminf(instSp, 12.f) * 0.025f;
-    if (a > 0.92f) a = 0.92f;
-    vel.x = vel.x * (1.f - a) + inst.x * a;
-    vel.z = vel.z * (1.f - a) + inst.z * a;
-    vel.y = vel.y * (1.f - a) + inst.y * a;
-    float sp = sqrtf(vel.x * vel.x + vel.z * vel.z);
-    if (sp < 0.30f) { vel.x = 0.f; vel.z = 0.f; sp = 0.f; }
-    if (sp > 15.f) {
-        float inv = 15.f / sp;
-        vel.x *= inv; vel.z *= inv; sp = 15.f;
+    static Vector3 s_instFilt[96] = {};
+    int slot = (int)(pawn % 96);
+    Vector3 &filt = s_instFilt[slot];
+    if (filt.x == 0.f && filt.z == 0.f) {
+        filt = inst;
+    } else {
+        float fa = 0.45f;
+        filt.x = filt.x * (1.f - fa) + inst.x * fa;
+        filt.z = filt.z * (1.f - fa) + inst.z * fa;
     }
-    float posA = 0.62f + fminf(sp, 10.f) * 0.032f;
-    if (posA > 0.94f) posA = 0.94f;
-    float jump = Vector3::Distance(raw, lastRaw);
-    if (jump > 1.10f) posA = 1.0f;
-    Vector3 smoothed = {
-        lastRaw.x * (1.f - posA) + raw.x * posA,
-        lastRaw.y * (1.f - posA) + raw.y * posA,
-        lastRaw.z * (1.f - posA) + raw.z * posA
-    };
-    lastRaw = smoothed;
-    lastT = now;
-    has = true;
+    Vector3 instF = filt;
+    float instSpeed = sqrtf(instF.x * instF.x + instF.z * instF.z);
+    float alpha = bulletLead
+        ? (0.55f + fminf(instSpeed, 12.f) * 0.035f)
+        : (0.38f + fminf(instSpeed, 10.f) * 0.025f);
+    if (alpha > (bulletLead ? 0.95f : 0.68f)) alpha = bulletLead ? 0.95f : 0.68f;
+    tr->vel.x = tr->vel.x * (1.f - alpha) + instF.x * alpha;
+    tr->vel.z = tr->vel.z * (1.f - alpha) + instF.z * alpha;
+    tr->vel.y = 0.f;
+    float speed = sqrtf(tr->vel.x * tr->vel.x + tr->vel.z * tr->vel.z);
+    if (speed < (bulletLead ? 0.22f : 0.40f)) {
+        tr->vel.x = 0.f;
+        tr->vel.z = 0.f;
+        speed = 0.f;
+    }
+    const float maxSpeed = bulletLead ? 14.0f : 11.0f;
+    if (speed > maxSpeed) {
+        float inv = maxSpeed / speed;
+        tr->vel.x *= inv;
+        tr->vel.z *= inv;
+        speed = maxSpeed;
+    }
+    tr->smoothHead = bodyPos;
+    tr->lastHip = motionAnchor;
+    tr->lastHead = bodyPos;
+    tr->lastT = now;
     float lead = 0.f;
-    if (sp > 2.4f && leadSec > 0.f) {
-        lead = leadSec * fminf(sp / 10.f, 1.0f);
-        if (lead > 0.055f) lead = 0.055f;
+    if (bulletLead) {
+        if (speed > 2.5f) {
+            lead = 0.010f + (speed / maxSpeed) * 0.025f;
+            if (lead > 0.035f) lead = 0.035f;
+        }
+    } else if (speed > 1.5f) {
+        lead = 0.008f + (speed / maxSpeed) * 0.018f;
+        if (lead > 0.025f) lead = 0.025f;
     }
-    Vector3 out = smoothed;
-    out.x += vel.x * lead;
-    out.z += vel.z * lead;
-    return out;
-}
-
-struct BoxScreenTrack {
-    uint64_t pawn = 0;
-    float h = 0.f;
-    float w = 0.f;
-    float cx = 0.f;
-    float topY = 0.f;
-    bool has = false;
-};
-static BoxScreenTrack g_boxScr[96];
-
-static inline void SmoothBoxScreen(uint64_t pawn, float &topY, float &centerX,
-                                   float &boxH, float &boxW) {
-    (void)pawn; (void)topY; (void)centerX; (void)boxH; (void)boxW;
-    return;
-}
-
-static inline void ClearBoxScreenForPawn(uint64_t pawn) {
-    if (pawn == 0) return;
-    BoxScreenTrack &t = g_boxScr[pawn % 96ull];
-    if (t.pawn == pawn) t = BoxScreenTrack{};
-}
-
-void ClearProBoxScreenForPawn(uint64_t pawn) {
-    ClearBoxScreenForPawn(pawn);
-}
-
-static inline Vector3 PickStableHeadRaw(uint64_t pawn, PosTrack &tr) {
-    Vector3 head = getPositionExt(getHead(pawn));
-    Vector3 hip  = getPositionExt(getHip(pawn));
-    Vector3 root = ReadPlayerRootTransform(pawn);
-    Vector3 mount{};
-    const bool mounted = IsActivelyMounted(pawn, &mount);
-    if (!tr.hasHead || tr.pawn != pawn) {
-        tr.isBot = get_IsBot(pawn);
-    }
-    const bool remoteHuman = !tr.isBot;
-    auto validHeadNear = [&](const Vector3 &h, const Vector3 &anchor, float maxD) -> bool {
-        if (!looksLikeWorldPos(h) || !looksLikeWorldPos(anchor)) return false;
-        float dx = h.x - anchor.x, dy = h.y - anchor.y, dz = h.z - anchor.z;
-        float d2 = dx*dx + dy*dy + dz*dz;
-        return d2 < maxD * maxD && h.y >= anchor.y - 0.85f;
+    (void)lockYToBody;
+    if (lead <= 0.0001f) return bodyPos;
+    Vector3 out = {
+        bodyPos.x + tr->vel.x * lead,
+        bodyPos.y,
+        bodyPos.z + tr->vel.z * lead
     };
-    int preferred = 0;
-    Vector3 raw{};
-    if (mounted && looksLikeWorldPos(mount)) {
-        bool bonesDead = !looksLikeWorldPos(head) && !looksLikeWorldPos(hip);
-        bool collapsed = false;
-        if (looksLikeWorldPos(head) && looksLikeWorldPos(hip)) {
-            float bd = Vector3::Distance(head, hip);
-            collapsed = (bd < 0.20f);
-        }
-        if (bonesDead || collapsed || !looksLikeWorldPos(root)) {
-            preferred = 4;
-            raw = mount;
-        }
-    }
-    if (preferred == 0 && remoteHuman && looksLikeWorldPos(root)) {
-        float headLagXZ = 0.f;
-        if (looksLikeWorldPos(head)) {
-            float dx = head.x - root.x, dz = head.z - root.z;
-            headLagXZ = sqrtf(dx * dx + dz * dz);
-        }
-        if (looksLikeWorldPos(head) && headLagXZ < 0.85f && validHeadNear(head, root, mounted ? 5.5f : 4.0f)) {
-            preferred = 1;
-            raw = head;
-        } else if (looksLikeWorldPos(head) && headLagXZ < 2.8f) {
-            preferred = 5;
-            raw.x = root.x;
-            raw.z = root.z;
-            raw.y = head.y;
-            if (raw.y < root.y + 0.2f) raw.y = root.y + (mounted ? 1.05f : 0.85f);
-        } else {
-            preferred = 3;
-            raw = root;
-            raw.y += mounted ? 1.05f : 0.85f;
-        }
-    } else if (preferred == 0) {
-        if (looksLikeWorldPos(head)) {
-            Vector3 anchor = looksLikeWorldPos(hip) ? hip : root;
-            float maxD = mounted ? 5.5f : 4.0f;
-            if (!looksLikeWorldPos(anchor) || validHeadNear(head, anchor, maxD)) {
-                preferred = 1;
-                raw = head;
-            }
-        }
-        if (preferred == 0 && looksLikeWorldPos(hip)) {
-            preferred = 2;
-            raw = hip;
-            raw.y += 0.55f;
-        }
-        if (preferred == 0 && looksLikeWorldPos(root)) {
-            preferred = 3;
-            raw = root;
-            raw.y += mounted ? 1.05f : 0.85f;
-        }
-    }
-    if (preferred == 0 && mounted && looksLikeWorldPos(mount)) {
-        preferred = 4;
-        raw = mount;
-    }
-    if (preferred == 0) return Vector3{0, 0, 0};
-    if (tr.pawn == pawn && tr.headSrc != 0 && tr.headSrcHold > 0) {
-        Vector3 keep{};
-        bool ok = false;
-        if (tr.headSrc == 1 && looksLikeWorldPos(head)) {
-            Vector3 anchor = looksLikeWorldPos(root) ? root : hip;
-            if (!looksLikeWorldPos(anchor) || validHeadNear(head, anchor, 5.5f)) {
-                keep = head; ok = true;
-            }
-        } else if (tr.headSrc == 5 && looksLikeWorldPos(root)) {
-            keep = root;
-            keep.y = looksLikeWorldPos(head) ? head.y : (root.y + 0.85f);
-            ok = true;
-        } else if (tr.headSrc == 2 && looksLikeWorldPos(hip)) {
-            keep = hip; keep.y += 0.55f; ok = true;
-        } else if (tr.headSrc == 3 && looksLikeWorldPos(root)) {
-            keep = root; keep.y += mounted ? 1.05f : 0.85f; ok = true;
-        } else if (tr.headSrc == 4 && mounted && looksLikeWorldPos(mount)) {
-            keep = mount; ok = true;
-        }
-        bool forceRoot = false;
-        if (remoteHuman && looksLikeWorldPos(root) && looksLikeWorldPos(head)) {
-            float dx = head.x - root.x, dz = head.z - root.z;
-            if (dx*dx + dz*dz > 1.2f * 1.2f && (preferred == 3 || preferred == 5))
-                forceRoot = true;
-        }
-        if (ok && !forceRoot && !(preferred == 5 && tr.headSrc == 1 && remoteHuman)) {
-            if (!(remoteHuman && (preferred == 5 || preferred == 3) && tr.headSrc == 1)) {
-                tr.headSrcHold--;
-                raw = keep;
-                preferred = tr.headSrc;
-            } else {
-                tr.headSrc = preferred;
-                tr.headSrcHold = 2;
-            }
-        } else {
-            tr.headSrc = preferred;
-            tr.headSrcHold = 2;
-        }
-    } else {
-        tr.headSrc = preferred;
-        tr.headSrcHold = 2;
-    }
-    return raw;
+    return out;
 }
 
-static inline Vector3 PickStableHipRaw(uint64_t pawn, PosTrack &tr) {
-    Vector3 hip  = getPositionExt(getHip(pawn));
+static Vector3 AimTrackAndLead(uint64_t pawn, Vector3 bodyPos, float distanceMeters, bool lockYToBody) {
+    return AimTrackAndLeadEx(pawn, bodyPos, distanceMeters, lockYToBody, false);
+}
+
+Vector3 GetAimTargetPosMode(uint64_t pawn, int posMode, float distance) {
+    (void)distance;
+    if (!isVaildPtr(pawn)) return Vector3{0,0,0};
+    Vector3 liveHead = getPositionExt(getHead(pawn));
+    Vector3 hip = getPositionExt(getHip(pawn));
     Vector3 root = ReadPlayerRootTransform(pawn);
-    Vector3 head = getPositionExt(getHead(pawn));
-    Vector3 mount{};
-    const bool mounted = IsActivelyMounted(pawn, &mount);
-    if (!tr.hasHip || tr.pawn != pawn) {
-        tr.isBot = get_IsBot(pawn);
-    }
-    const bool remoteHuman = !tr.isBot;
-    int preferred = 0;
-    Vector3 raw{};
-    if (mounted && looksLikeWorldPos(mount)) {
-        bool bonesDead = !looksLikeWorldPos(hip) && !looksLikeWorldPos(head);
-        bool collapsed = looksLikeWorldPos(hip) && looksLikeWorldPos(head) &&
-                         Vector3::Distance(hip, head) < 0.20f;
-        if (bonesDead || collapsed || !looksLikeWorldPos(root)) {
-            preferred = 4;
-            raw = mount;
-            raw.y -= 0.35f;
+    Vector3 head = liveHead;
+    bool headOk = false;
+    if (looksLikeWorldPos(liveHead)) {
+        Vector3 anchor = looksLikeWorldPos(hip) ? hip : root;
+        if (!looksLikeWorldPos(anchor)) {
+            headOk = true;
+        } else {
+            float dx = liveHead.x - anchor.x, dy = liveHead.y - anchor.y, dz = liveHead.z - anchor.z;
+            float d2 = dx*dx + dy*dy + dz*dz;
+            if (d2 < 6.0f * 6.0f && liveHead.y >= anchor.y - 0.6f) headOk = true;
         }
     }
-    if (preferred == 0 && remoteHuman && looksLikeWorldPos(root)) {
-        if (looksLikeWorldPos(hip)) {
-            float dx = hip.x - root.x, dz = hip.z - root.z;
-            float lag = sqrtf(dx*dx + dz*dz);
-            if (lag < 0.90f) {
-                preferred = 2; raw = hip;
+    if (!headOk) {
+        head = getPositionExt(getHead(pawn));
+        if (IsZeroVec(head) || !looksLikeWorldPos(head)) {
+            Vector3 mount{};
+            if (IsActivelyMounted(pawn, &mount) && looksLikeWorldPos(mount)) {
+                head = mount;
+            } else if (looksLikeWorldPos(root)) {
+                head = root;
+                head.y += 0.85f;
+            } else if (looksLikeWorldPos(hip)) {
+                head = hip;
+                head.y += 0.55f;
             } else {
-                preferred = 3;
-                raw = root;
-                raw.y = (lag < 2.5f) ? hip.y : root.y;
+                return Vector3{0, 0, 0};
             }
+        }
+    }
+    if (posMode == 0) {
+        return head;
+    }
+    Vector3 hipPos = looksLikeWorldPos(hip) ? hip : Vector3{0, 0, 0};
+    if (IsZeroVec(hipPos) || !looksLikeWorldPos(hipPos)) {
+        if (looksLikeWorldPos(root)) {
+            hipPos = root;
         } else {
-            preferred = 3; raw = root;
+            head.y -= (posMode == 1) ? 0.14f : 0.34f;
+            return head;
         }
-    } else if (preferred == 0) {
-        if (looksLikeWorldPos(hip)) { preferred = 2; raw = hip; }
-        else if (looksLikeWorldPos(root)) { preferred = 3; raw = root; }
-        else if (looksLikeWorldPos(head)) { preferred = 1; raw = head; raw.y -= 0.55f; }
-        else if (mounted && looksLikeWorldPos(mount)) { preferred = 4; raw = mount; raw.y -= 0.35f; }
     }
-    if (preferred == 0 && mounted && looksLikeWorldPos(mount)) {
-        preferred = 4; raw = mount; raw.y -= 0.35f;
+    const float dx = hipPos.x - head.x;
+    const float dy = hipPos.y - head.y;
+    const float dz = hipPos.z - head.z;
+    if (posMode == 1) {
+        const float t = 0.22f;
+        return Vector3(head.x + dx * t, head.y + dy * t, head.z + dz * t);
     }
-    if (preferred == 0) return Vector3{0, 0, 0};
-    if (tr.pawn == pawn && tr.hipSrc != 0 && tr.hipSrcHold > 0) {
-        Vector3 keep{};
-        bool ok = false;
-        if (tr.hipSrc == 2 && looksLikeWorldPos(hip)) { keep = hip; ok = true; }
-        else if (tr.hipSrc == 3 && looksLikeWorldPos(root)) { keep = root; ok = true; }
-        else if (tr.hipSrc == 1 && looksLikeWorldPos(head)) { keep = head; keep.y -= 0.55f; ok = true; }
-        else if (tr.hipSrc == 4 && mounted && looksLikeWorldPos(mount)) { keep = mount; keep.y -= 0.35f; ok = true; }
-        bool forceRoot = false;
-        if (remoteHuman && looksLikeWorldPos(root) && looksLikeWorldPos(hip)) {
-            float dx = hip.x - root.x, dz = hip.z - root.z;
-            if (dx*dx + dz*dz > 1.2f * 1.2f && preferred == 3) forceRoot = true;
-        }
-        if (ok && !forceRoot) {
-            if (!(remoteHuman && preferred == 3 && tr.hipSrc == 2)) {
-                tr.hipSrcHold--;
-                raw = keep;
-                preferred = tr.hipSrc;
-            } else {
-                tr.hipSrc = preferred;
-                tr.hipSrcHold = 2;
-            }
-        } else {
-            tr.hipSrc = preferred;
-            tr.hipSrcHold = 2;
-        }
-    } else {
-        tr.hipSrc = preferred;
-        tr.hipSrcHold = 2;
-    }
-    return raw;
+    const float t = 0.52f;
+    return Vector3(head.x + dx * t, head.y + dy * t, head.z + dz * t);
 }
 
-static inline Vector3 ResolveHeadWorldPosTracked(uint64_t pawn) {
-    if (!isVaildPtr(pawn)) return Vector3{0, 0, 0};
-    PosTrack &tr = g_posTrack[PosTrackSlot(pawn)];
-    if (tr.pawn == pawn && tr.deadUntilFrame > 0 && g_cacheFrameCounter < tr.deadUntilFrame) {
+static inline Vector3 AimLookAtHeadLive(uint64_t localPawn, uint64_t targetPawn, int aimPosMode,
+                                        float distanceMeters, Vector3 fromFallback, int bursts,
+                                        Vector3 *outLastAim, bool freezeOrigin) {
+    if (!isVaildPtr(localPawn) || !isVaildPtr(targetPawn)) return Vector3{0, 0, 0};
+    (void)bursts;
+    (void)freezeOrigin;
+    update_aim_assist_legit_tuning(false);
+    DisableGameDefaultAimAssist(localPawn, true);
+    Vector3 bone = GetAimTargetPosMode(targetPawn, aimPosMode, distanceMeters);
+    if (IsZeroVec(bone) || !looksLikeWorldPos(bone)) {
+        Vector3 liveHead = getPositionExt(getHead(targetPawn));
+        if (looksLikeWorldPos(liveHead)) bone = liveHead;
+    }
+    if (IsZeroVec(bone) || !looksLikeWorldPos(bone)) {
+        if (outLastAim) *outLastAim = Vector3{0, 0, 0};
         return Vector3{0, 0, 0};
     }
-    if (tr.pawn != pawn) {
-        tr = PosTrack{};
-        tr.pawn = pawn;
-        tr.isBot = get_IsBot(pawn);
+    Vector3 aimed = AimTrackAndLeadEx(targetPawn, bone, distanceMeters, true, false);
+    if (IsZeroVec(aimed) || !looksLikeWorldPos(aimed)) aimed = bone;
+    Vector3 from = AimCameraOrigin(localPawn, fromFallback);
+    if (IsZeroVec(from) || !looksLikeWorldPos(from)) from = fromFallback;
+    if (IsZeroVec(from) || !looksLikeWorldPos(from)) {
+        from = getPositionExt(getHead(localPawn));
     }
-    Vector3 raw = PickStableHeadRaw(pawn, tr);
-    if (!looksLikeWorldPos(raw)) {
-        tr.hasHead = false;
-        tr.headSrc = 0;
-        tr.headSrcHold = 0;
-        return Vector3{0, 0, 0};
+    if (IsZeroVec(from) || !looksLikeWorldPos(from)) {
+        if (outLastAim) *outLastAim = aimed;
+        return aimed;
     }
-    float lead = tr.isBot ? 0.f : 0.055f;
-    Vector3 out = TrackAndExtrapolate(raw, tr.lastHeadRaw, tr.headVel, tr.lastHeadT, tr.hasHead, lead);
-    tr.headSmoothed = out;
-    tr.frame = g_cacheFrameCounter;
-    return out;
-}
-
-static inline Vector3 ResolveHipWorldPosTracked(uint64_t pawn) {
-    if (!isVaildPtr(pawn)) return Vector3{0, 0, 0};
-    PosTrack &tr = g_posTrack[PosTrackSlot(pawn)];
-    if (tr.pawn == pawn && tr.deadUntilFrame > 0 && g_cacheFrameCounter < tr.deadUntilFrame) {
-        return Vector3{0, 0, 0};
+    Quaternion targetQ = Quaternion::Normalized(GetRotationToLocation(aimed, 0.0f, from));
+    if (isnan(targetQ.x) || isnan(targetQ.y) || isnan(targetQ.z) || isnan(targetQ.w)) {
+        if (outLastAim) *outLastAim = aimed;
+        return aimed;
     }
-    if (tr.pawn != pawn) {
-        tr = PosTrack{};
-        tr.pawn = pawn;
-        tr.isBot = get_IsBot(pawn);
-    }
-    Vector3 raw = PickStableHipRaw(pawn, tr);
-    if (!looksLikeWorldPos(raw)) {
-        tr.hasHip = false;
-        tr.hipSrc = 0;
-        tr.hipSrcHold = 0;
-        return Vector3{0, 0, 0};
-    }
-    float lead = tr.isBot ? 0.f : 0.055f;
-    Vector3 out = TrackAndExtrapolate(raw, tr.lastHipRaw, tr.hipVel, tr.lastHipT, tr.hasHip, lead);
-    tr.hipSmoothed = out;
-    tr.frame = g_cacheFrameCounter;
-    return out;
-}
-
-static inline Vector3 EspSmoothDisplayPos(uint64_t pawn, Vector3 raw, bool isHead) {
-    if (!looksLikeWorldPos(raw) || !isVaildPtr(pawn)) return raw;
-    PosTrack &tr = g_posTrack[PosTrackSlot(pawn)];
-    if (tr.pawn == pawn && tr.deadUntilFrame > 0 && g_cacheFrameCounter < tr.deadUntilFrame) {
-        return Vector3{0,0,0};
-    }
-    if (tr.pawn != pawn) {
-        tr = PosTrack{};
-        tr.pawn = pawn;
-        tr.isBot = get_IsBot(pawn);
-    }
-    float lead = tr.isBot ? 0.f : 0.050f;
-    if (isHead) {
-        Vector3 out = TrackAndExtrapolate(raw, tr.lastHeadRaw, tr.headVel, tr.lastHeadT, tr.hasHead, lead);
-        tr.headSmoothed = out;
-        tr.frame = g_cacheFrameCounter;
-        return out;
-    }
-    Vector3 out = TrackAndExtrapolate(raw, tr.lastHipRaw, tr.hipVel, tr.lastHipT, tr.hasHip, lead);
-    tr.hipSmoothed = out;
-    tr.frame = g_cacheFrameCounter;
-    return out;
-}
-
-static void TipaEspTrace(int tag, NSString *fmt, ...) { (void)tag; (void)fmt; }
-
-static inline float Clamp01f(float v) {
-    if (v < 0.0f) return 0.0f;
-    if (v > 1.0f) return 1.0f;
-    return v;
-}
-
-static std::vector<mach_vm_address_t> g_patchedAddresses;
-static std::mutex g_patchedMtx;
-
-extern "C" void ToggleSpeedX50(bool enable) {
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
-        std::lock_guard<std::mutex> lk(g_patchedMtx);
-        pid_t pid = (pid_t)GameTargetProcessPid();
-        if (pid <= 0) return;
-        task_t target_task = 0;
-        if (task_for_pid(mach_task_self(), pid, &target_task) != KERN_SUCCESS) {
-            NSLog(@"[HTH Cheat] LỖI: Không lấy được quyền task_for_pid!");
-            return;
-        }
-        uint64_t originalVal = 4397530849764387586ULL;
-        uint64_t hackedVal   = 4397530849740000000ULL;
-        if (enable) {
-            g_patchedAddresses.clear();
-            mach_vm_address_t address = 0x100000000;
-            mach_vm_size_t size = 0;
-            vm_region_basic_info_data_64_t info;
-            mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
-            mach_port_t object_name;
-            while (mach_vm_region(target_task, &address, &size, VM_REGION_BASIC_INFO_64, (vm_region_info_t)&info, &count, &object_name) == KERN_SUCCESS) {
-                if (address > 0x160000000) break;
-                if ((info.protection & VM_PROT_READ) && (info.protection & VM_PROT_WRITE)) {
-                    uint8_t *buffer = (uint8_t *)malloc(size);
-                    mach_vm_size_t bytesRead = 0;
-                    if (mach_vm_read_overwrite(target_task, address, size, (mach_vm_address_t)buffer, &bytesRead) == KERN_SUCCESS) {
-                        for (size_t i = 0; i <= bytesRead - 8; i += 4) {
-                            uint64_t currentValue = *(uint64_t *)(buffer + i);
-                            if (currentValue == originalVal) {
-                                mach_vm_address_t exactWriteAddress = address + i;
-                                mach_vm_write(target_task, exactWriteAddress, (vm_offset_t)&hackedVal, sizeof(hackedVal));
-                                g_patchedAddresses.push_back(exactWriteAddress);
-                            }
-                        }
-                    }
-                    free(buffer);
-                }
-                address += size;
-            }
+    Quaternion cur = ReadAddr<Quaternion>(localPawn + kAimRotation);
+    float n = cur.x*cur.x + cur.y*cur.y + cur.z*cur.z + cur.w*cur.w;
+    Quaternion outQ = targetQ;
+    if (isAimLegit && n > 0.0001f && !isnan(n)) {
+        cur = Quaternion::Normalized(cur);
+        float ang = Quaternion::Angle(cur, targetQ);
+        const float kDeadzoneRad = 0.0035f;
+        if (ang < kDeadzoneRad) {
+            outQ = cur;
         } else {
-            if (g_patchedAddresses.empty()) return;
-            for (mach_vm_address_t savedAddr : g_patchedAddresses) {
-                mach_vm_write(target_task, savedAddr, (vm_offset_t)&originalVal, sizeof(originalVal));
-            }
-            g_patchedAddresses.clear();
-        }
-    });
-}
-
-static void write_aim_rotations(uint64_t player, const Quaternion &out) {
-    if (!isVaildPtr(player)) return;
-    WriteAddr<Quaternion>(player + kAimRotation, out);
-    WriteAddr<Quaternion>(player + kAimRotationAux, out);
-    if (kAimRotation != 0x5B4) {
-        WriteAddr<Quaternion>(player + 0x5B4, out);
-        WriteAddr<Quaternion>(player + 0x5C4, out);
-    }
-    WriteAddr<Quaternion>(player + kCurrentAimRotation, out);
-    if (kCurrentAimRotation != 0x19A4) {
-        WriteAddr<Quaternion>(player + 0x19A4, out);
-    }
-}
-
-void set_aim(uint64_t player, Quaternion rotation, float speed, int mode, bool forceInstant) {
-    if (!isVaildPtr(player)) return;
-    Quaternion q = Quaternion::Normalized(rotation);
-    if (isnan(q.x) || isnan(q.y) || isnan(q.z) || isnan(q.w)) return;
-    const bool hardLock = forceInstant || mode >= 1 || speed >= 0.75f;
-    if (hardLock) {
-        write_aim_rotations(player, q);
-        return;
-    }
-    Quaternion current = ReadAddr<Quaternion>(player + kAimRotation);
-    float n = current.x * current.x + current.y * current.y + current.z * current.z + current.w * current.w;
-    if (!(n > 0.0001f) || isnan(n)) {
-        write_aim_rotations(player, q);
-        return;
-    }
-    current = Quaternion::Normalized(current);
-    float angle = Quaternion::Angle(current, q);
-    if (isnan(angle) || angle < 0.0005f) {
-        write_aim_rotations(player, q);
-        return;
-    }
-    float s = Clamp01f(speed);
-    float base = 0.55f + 0.45f * s;
-    if (angle > 0.08f) base = fmaxf(base, 0.90f);
-    float t = fminf(1.0f, base);
-    Quaternion out = Quaternion::Normalized(Quaternion::Slerp(current, q, t));
-    if (isnan(out.x) || isnan(out.y) || isnan(out.z) || isnan(out.w)) return;
-    write_aim_rotations(player, out);
-}
-
-static float g_aaSavedKnol = 0.f;
-static float g_aaSavedNfk  = 0.f;
-static bool  g_aaLegitBoostActive = false;
-
-void update_aim_assist_legit_tuning(bool enable) {
-    if (enable == g_aaLegitBoostActive) return;
-    if (Moudule_Base == (uint64_t)-1 || Moudule_Base == 0 || !isVaildPtr(Moudule_Base)) {
-        g_aaLegitBoostActive = false;
-        return;
-    }
-    uint64_t typeInfo = ReadAddr<uint64_t>(Moudule_Base + kAimAssistTypeInfo);
-    if (!isVaildPtr(typeInfo)) return;
-    uint64_t statics = ReadAddr<uint64_t>(typeInfo + kTypeInfoStatics);
-    if (!isVaildPtr(statics)) return;
-    if (!enable) {
-        if (g_aaLegitBoostActive) {
-            WriteAddr<float>(statics + kAaStaticKnolgmjlcef, g_aaSavedKnol);
-            WriteAddr<float>(statics + kAaStaticNfkcllpalej, g_aaSavedNfk);
-            g_aaLegitBoostActive = false;
-        }
-        return;
-    }
-    g_aaSavedKnol = ReadAddr<float>(statics + kAaStaticKnolgmjlcef);
-    g_aaSavedNfk  = ReadAddr<float>(statics + kAaStaticNfkcllpalej);
-    WriteAddr<float>(statics + kAaStaticKnolgmjlcef, g_aaSavedKnol * 0.88f);
-    WriteAddr<float>(statics + kAaStaticNfkcllpalej, g_aaSavedNfk * 1.18f);
-    g_aaLegitBoostActive = true;
-}
-
-static float esp_aim_delta_time(void) {
-    static CFTimeInterval s_last = 0.0;
-    const CFTimeInterval now = CACurrentMediaTime();
-    float dt = (s_last > 0.0) ? (float)(now - s_last) : (1.f / 60.f);
-    s_last = now;
-    if (dt <= 0.f || dt > 0.25f) dt = 1.f / 60.f;
-    return dt;
-}
-
-static float legit_aim_blend_t(float angleRad, float speed01, float targetDistance, float maxAimDistance) {
-    const float dt = esp_aim_delta_time();
-    const float dtScale = fminf(fmaxf(dt * 60.f, 0.5f), 2.f);
-    const float refAngle = 40.f * 3.14159265f / 180.f;
-    const float angleNorm = fminf(angleRad / refAngle, 1.f);
-    const float angleEase = 0.28f + 0.72f * (1.f - powf(angleNorm, 1.25f));
-    const float speedCurve = 0.035f + 0.32f * powf(speed01, 1.2f);
-    const float distNorm = Clamp01f(targetDistance / fmaxf(maxAimDistance, 1.f));
-    const float distBias = 0.90f + 0.10f * (1.f - distNorm);
-    float t = speedCurve * angleEase * distBias * dtScale;
-    const float kMicroAngleRad = 1.5f * 3.14159265f / 180.f;
-    if (angleRad < kMicroAngleRad) t *= 0.55f;
-    const float maxT = (0.10f + 0.22f * speed01) * dtScale;
-    const float minT = 0.012f * dtScale;
-    if (t < minT) t = minT;
-    if (t > maxT) t = maxT;
-    return t;
-}
-
-void set_aim_legit(uint64_t player, Quaternion rotation, float targetDistance) {
-    if (!isVaildPtr(player)) return;
-    Quaternion q = Quaternion::Normalized(rotation);
-    if (isnan(q.x) || isnan(q.y) || isnan(q.z) || isnan(q.w)) return;
-    Quaternion current = ReadAddr<Quaternion>(player + kAimRotation);
-    float n = current.x * current.x + current.y * current.y + current.z * current.z + current.w * current.w;
-    if (!(n > 0.0001f) || isnan(n)) {
-        write_aim_rotations(player, q);
-        return;
-    }
-    current = Quaternion::Normalized(current);
-    float angle = Quaternion::Angle(current, q);
-    if (isnan(angle)) return;
-    if (angle < 0.0015f) return;
-    float s = Clamp01f(aimSpeed);
-    float t = legit_aim_blend_t(angle, s, targetDistance, aimDistance);
-    Quaternion blended = Quaternion::Slerp(current, q, t);
-    Quaternion out = Quaternion::Normalized(blended);
-    if (isnan(out.x) || isnan(out.y) || isnan(out.z) || isnan(out.w)) return;
-    write_aim_rotations(player, out);
-}
-
-static UIFont *LoadCountFont(CGFloat size) {
-    static BOOL fontLoaded = NO;
-    static NSString *realFontName = @"Arial-BoldMT";
-    if (!fontLoaded) {
-        NSString *fontPath = [[[NSBundle mainBundle] bundlePath] stringByAppendingPathComponent:@"Font/count.ttf"];
-        if ([[NSFileManager defaultManager] fileExistsAtPath:fontPath]) {
-            CGDataProviderRef fontDataProvider = CGDataProviderCreateWithFilename([fontPath UTF8String]);
-            if (fontDataProvider) {
-                CGFontRef customFont = CGFontCreateWithDataProvider(fontDataProvider);
-                if (customFont) {
-                    CTFontManagerRegisterGraphicsFont(customFont, nil);
-                    NSString *postScriptName = (__bridge_transfer NSString *)CGFontCopyPostScriptName(customFont);
-                    if (postScriptName) { realFontName = postScriptName; }
-                    CGFontRelease(customFont);
-                }
-                CGDataProviderRelease(fontDataProvider);
-            }
-        }
-        fontLoaded = YES;
-    }
-    UIFont *font = [UIFont fontWithName:realFontName size:size];
-    return font ? font : [UIFont boldSystemFontOfSize:size];
-}
-
-static inline CGMutablePathRef ESPCreateMutablePath(void) { return CGPathCreateMutable(); }
-static inline void ESPReleasePath(CGMutablePathRef path) { if (path) CGPathRelease(path); }
-
-static inline ESPGeometryBuffers ESPGeometryBuffersCreate(void) {
-    ESPGeometryBuffers buffers;
-    buffers.boxPath = ESPCreateMutablePath();
-    buffers.boxBotPath = ESPCreateMutablePath();
-    buffers.boxKnockedPath = ESPCreateMutablePath();
-    buffers.bonePath = ESPCreateMutablePath();
-    buffers.boneBotPath = ESPCreateMutablePath();
-    buffers.boneKnockedPath = ESPCreateMutablePath();
-    buffers.snaplinePath = ESPCreateMutablePath();
-    buffers.snaplineBotPath = ESPCreateMutablePath();
-    buffers.snaplineKnockedPath = ESPCreateMutablePath();
-    buffers.hpFillGreenPath = ESPCreateMutablePath();
-    buffers.hpFillOrangePath = ESPCreateMutablePath();
-    buffers.hpFillRedPath = ESPCreateMutablePath();
-    buffers.bgFillBlackPath = ESPCreateMutablePath();
-    buffers.alertPath = ESPCreateMutablePath();
-    buffers.boxDirty = buffers.boxBotDirty = buffers.boxKnockedDirty = NO;
-    buffers.boneDirty = buffers.boneBotDirty = buffers.boneKnockedDirty = NO;
-    buffers.snaplineDirty = buffers.snaplineBotDirty = buffers.snaplineKnockedDirty = NO;
-    buffers.hpFillGreenDirty = buffers.hpFillOrangeDirty = buffers.hpFillRedDirty = NO;
-    buffers.bgFillBlackDirty = buffers.alertDirty = NO;
-    return buffers;
-}
-
-typedef struct { uint32_t n; uint32_t curves; } ESPPathCountCtx;
-static void espCountPathElements(void *info, const CGPathElement *e) {
-    ESPPathCountCtx *c = (ESPPathCountCtx *)info;
-    if (!c) return;
-    c->n++;
-    if (e->type == kCGPathElementAddCurveToPoint ||
-        e->type == kCGPathElementAddQuadCurveToPoint) c->curves++;
-}
-
-static inline void ESPGeometryBuffersRelease(ESPGeometryBuffers *buffers) {
-    if (!buffers) return;
-    ESPReleasePath(buffers->boxPath); ESPReleasePath(buffers->boxBotPath); ESPReleasePath(buffers->boxKnockedPath);
-    ESPReleasePath(buffers->bonePath); ESPReleasePath(buffers->boneBotPath); ESPReleasePath(buffers->boneKnockedPath);
-    ESPReleasePath(buffers->snaplinePath); ESPReleasePath(buffers->snaplineBotPath);
-    ESPReleasePath(buffers->snaplineKnockedPath); ESPReleasePath(buffers->hpFillGreenPath);
-    ESPReleasePath(buffers->hpFillOrangePath); ESPReleasePath(buffers->hpFillRedPath);
-    ESPReleasePath(buffers->bgFillBlackPath); ESPReleasePath(buffers->alertPath);
-}
-
-static inline void MenuViewApplyPath(CAShapeLayer *layer, CGMutablePathRef path, bool dirty) {
-    if (!layer) return;
-    if (dirty && path) { layer.path = path; }
-    else if (layer.path != nil) { layer.path = nil; }
-}
-
-static int syncTick = 0;
-static bool s_setNameEnabledGlobal = false;
-static NSString *s_customNameGlobal = nil;
-
-void ESPSyncFromPrefs(void) {
-    static CFTimeInterval s_lastFullSync = 0;
-    CFTimeInterval nowSync = CACurrentMediaTime();
-    if (s_lastFullSync > 0 && (nowSync - s_lastFullSync) < 0.05) return;
-    s_lastFullSync = nowSync;
-    (void)syncTick;
-
-    isStreamerMode = ESPPrefsBool(@"StreamerMode", NO);
-    Norecoil   = ESPPrefsBool(@"Norecoil", NO);
-    {
-        float bs = ESPPrefsFloat(@"BrutalSpeed", 0.16f);
-        if (bs < 0.05f) bs = 0.05f;
-        if (bs > 0.80f) bs = 0.80f;
-        speedvalue = Norecoil ? bs : 1.0f;
-    }
-    isSpeed = ESPPrefsBool(@"Speed", NO);
-    moveSpeedScale = ESPPrefsFloat(@"SpeedValue", 1.22f);
-    if (moveSpeedScale < 1.0f) moveSpeedScale = 1.0f;
-    if (moveSpeedScale > 1.45f) moveSpeedScale = 1.45f;
-    if (!isSpeed) moveSpeedScale = 1.0f;
-    if (Norecoil) {
-        // ⚠️ FIX: Không ESPPrefsSetBool mỗi sync → disk 1GB/giờ.
-        isSpeed = NO;
-        moveSpeedScale = 1.0f;
-    }
-    isShowFovCircle = ESPPrefsBool(@"ShowFovCircle", YES);
-    isESP      = ESPPrefsBool(@"EnableESP", YES);
-    isESP2     = ESPPrefsBool(@"EnableESP2", NO);
-    isBox      = ESPPrefsBool(@"Box", YES);
-    boxMode    = (int)ESPPrefsFloat(@"BoxMode", 0.0f);
-    isBone     = ESPPrefsBool(@"Bone", YES);
-    isHealth   = ESPPrefsBool(@"Health", YES);
-    isName     = ESPPrefsBool(@"Name", YES);
-    isDis      = ESPPrefsBool(@"Distance", YES);
-    isLine     = ESPPrefsBool(@"Line", YES);
-    isEspBot   = ESPPrefsBool(@"EspBot", YES);
-    isWeapon   = ESPPrefsBool(@"Weapon", NO);
-    isCount    = ESPPrefsBool(@"Count", YES);
-    isAlert360 = ESPPrefsBool(@"Alert360", NO);
-    isAlertNum = ESPPrefsBool(@"AlertNum", NO);
-    isEspCheckVisible = ESPPrefsBool(@"EspCheckVisible", NO);
-    {
-        BOOL aimOnBot = YES;
-        id aimOnBotPref = AppSettingsObjectForKey(@"AimOnBot");
-        if (aimOnBotPref != nil) {
-            aimOnBot = ESPPrefsBool(@"AimOnBot", YES);
-        } else {
-            aimOnBot = !ESPPrefsBool(@"AimIgnoreBot", NO);
-        }
-        isAimIgnoreBot = !aimOnBot;
-        // ⚠️ FIX: Bỏ ESPPrefsSetBool(@"AimIgnoreBot", ...) — ghi disk mỗi 1s.
-        if (aimOnBot) isEspBot = YES;
-    }
-    isAimIgnoreKnock = ESPPrefsBool(@"AimIgnoreKnock", NO);
-    isAimBehindWall = ESPPrefsBool(@"AimBehindWall", NO);
-    // ⚠️ FIX: Bỏ ESPPrefsSetBool(@"AimBehindIceWall", NO).
-    isAimRage = ESPPrefsBool(@"AimRage", NO);
-    isAimbot    = ESPPrefsBool(@"Aimbot", NO);
-    isAimAssist = ESPPrefsBool(@"AimAssist", NO);
-    isAimLegit  = ESPPrefsBool(@"AimLegit", NO);
-    if (isAimbot && isAimLegit) {
-        isAimLegit = NO;  // local only
-    } else if (!isAimbot && isAimAssist && isAimLegit) {
-        isAimLegit = NO;
-    }
-    {
-        int mode = (int)ESPPrefsFloat(@"AimSphereMode", -1.0f);
-        if (mode < 0) {
-            mode = ESPPrefsBool(@"Aim360", NO) ? 2 : 0;
-        }
-        if (mode < 0) mode = 0;
-        if (mode > 2) mode = 2;
-        aimSphereMode = isAimbot ? mode : 0;
-    }
-    bool wasSilent = isAimSilent;
-    isAimSilent = ESPPrefsBool(@"AimSilent", NO);
-    if (wasSilent && !isAimSilent) {
-        SilentAimStop();
-    }
-    isFastReload = ESPPrefsBool(@"FastReload", NO);
-    fastReloadSpeed = ESPPrefsFloat(@"FastReloadSpeed", 1.0f);
-    // ⚠️ FIX: Bỏ ESPPrefsSetBool(@"InstantHeal"/@"FastWeaponSwitch", NO).
-    isCamPC    = ESPPrefsBool(@"CamPC", NO);
-    camPCValue = ESPPrefsFloat(@"CamPCValue", 30.0f);
-    if (camPCValue < 0.0f) camPCValue = 0.0f;
-    if (camPCValue > 150.0f) camPCValue = 150.0f;
-    aimMode = (int)ESPPrefsFloat(@"AimMode", 1.0f);
-    triggerMode = (int)ESPPrefsFloat(@"TriggerMode", 0.0f);
-    if (triggerMode < 0) triggerMode = 0;
-    if (triggerMode > 3) triggerMode = 3;
-    aimPosition = (int)ESPPrefsFloat(@"AimPos", 0.0f);
-    if (aimPosition < 0) aimPosition = 0;
-    if (aimPosition > 2) aimPosition = 2;
-    aimTargetMode = (int)ESPPrefsFloat(@"AimTargetMode", 0.0f);
-    aimFov = ESPPrefsFloat(@"Fov", 150.0f);
-    if (aimFov <= 1.0f) aimFov = 150.0f;
-    aimDistance = ESPPrefsFloat(@"AimDistance", -1.0f);
-    if (aimDistance < 0.0f) {
-        id legacy = AppSettingsObjectForKey(@"Distance");
-        if ([legacy isKindOfClass:[NSNumber class]] && [(NSNumber *)legacy floatValue] > 1.5f) {
-            aimDistance = [(NSNumber *)legacy floatValue];
-        } else {
-            aimDistance = 200.0f;
+            float dt = esp_aim_delta_time();
+            float rate = 90.0f;
+            if (ang > 0.25f)      rate = 240.0f;
+            else if (ang > 0.10f) rate = 160.0f;
+            else if (ang > 0.04f) rate = 110.0f;
+            float alpha = 1.0f - expf(-rate * fmaxf(dt, 0.004f));
+            alpha = fminf(alpha, 0.985f);
+            outQ = Quaternion::Normalized(Quaternion::Slerp(cur, targetQ, alpha));
+            if (isnan(outQ.x) || isnan(outQ.y) || isnan(outQ.z) || isnan(outQ.w)) outQ = targetQ;
         }
     }
-    if (aimDistance <= 1.0f) aimDistance = 200.0f;
-    aimSpeed = ESPPrefsFloat(@"AimSpeed", 100.0f) / 100.0f;
-    if (aimSpeed < 0.01f) aimSpeed = 0.01f;
-    if (aimSpeed > 1.0f) aimSpeed = 1.0f;
-    espDistanceLimit = ESPPrefsFloat(@"EspDistanceLimit", 150.0f);
-    if (espDistanceLimit < 10.0f) espDistanceLimit = 150.0f;
-    s_setNameEnabledGlobal = ESPPrefsBool(@"SetName", NO);
-    NSString *customDefault = @"@Bolaminhduc";
-    NSString *newName = AppSettingsObjectForKey(@"CustomName");
-    if (![newName isKindOfClass:[NSString class]] || ((NSString *)newName).length == 0 ||
-        [newName containsString:@"thanhhoa"] || [newName containsString:@"Thanhhoa"] ||
-        [newName containsString:@"Ng_thanhhoa"] || [newName containsString:@"ng_thanhhoa"]) {
-        newName = customDefault;
-    }
-    if (![newName isEqualToString:s_customNameGlobal]) {
-        s_customNameGlobal = newName;
-    }
-    int menuStyle = (int)ESPPrefsFloat(@"MenuLayoutStyle", 0.0f);
-    if (menuStyle == 1) {
-        isEspBot = YES;
-        isAimIgnoreBot = NO;
-        isAimIgnoreKnock = YES;
-        isEspCheckVisible = YES;
-    }
-    boxThick = ESPPrefsFloat(@"BoxThickness", 1.0f);
-    boxR = ESPPrefsFloat(@"BoxColorR", 0.0f); boxG = ESPPrefsFloat(@"BoxColorG", 1.0f); boxB = ESPPrefsFloat(@"BoxColorB", 1.0f);
-    boxColorMode = (int)ESPPrefsFloat(@"BoxColorMode", 0.0f);
-    if (boxColorMode < 0) boxColorMode = 0;
-    if (boxColorMode > 1) boxColorMode = 1;
-    boneThick = ESPPrefsFloat(@"BoneThickness", 1.0f);
-    boneR = ESPPrefsFloat(@"BoneColorR", 0.0f); boneG = ESPPrefsFloat(@"BoneColorG", 1.0f); boneB = ESPPrefsFloat(@"BoneColorB", 1.0f);
-    boneColorMode = (int)ESPPrefsFloat(@"BoneColorMode", 0.0f);
-    if (boneColorMode < 0) boneColorMode = 0;
-    if (boneColorMode > 1) boneColorMode = 1;
-    lineThick = ESPPrefsFloat(@"LineThickness", 1.0f);
-    lineR = ESPPrefsFloat(@"LineColorR", 0.0f); lineG = ESPPrefsFloat(@"LineColorG", 1.0f); lineB = ESPPrefsFloat(@"LineColorB", 1.0f);
-    lineColorMode = (int)ESPPrefsFloat(@"LineColorMode", 0.0f);
-    if (lineColorMode < 0) lineColorMode = 0;
-    if (lineColorMode > 1) lineColorMode = 1;
-    fovThick = ESPPrefsFloat(@"FovThickness", 0.6f);
-    fovR = ESPPrefsFloat(@"FovColorR", 1.0f); fovG = ESPPrefsFloat(@"FovColorG", 1.0f); fovB = ESPPrefsFloat(@"FovColorB", 0.0f);
-    fovColorMode = (int)ESPPrefsFloat(@"FovColorMode", 0.0f);
-    if (fovColorMode < 0) fovColorMode = 0;
-    if (fovColorMode > 1) fovColorMode = 1;
-    aimAssistThick = ESPPrefsFloat(@"AimAssistThickness", 1.5f);
-    aimAssistR = ESPPrefsFloat(@"AimAssistColorR", 0.0f); aimAssistG = ESPPrefsFloat(@"AimAssistColorG", 1.0f); aimAssistB = ESPPrefsFloat(@"AimAssistColorB", 1.0f);
+    write_aim_rotations(localPawn, outQ);
+    AimSyncFireHit(localPawn, from, aimed);
+    if (outLastAim) *outLastAim = aimed;
+    return aimed;
 }
+// ============================================================
+// esp.mm — Part 6/8
+// ESP_View interface + init + layers + dealloc
+// ============================================================
 
 @interface HTHESPSecureWrapper : UITextField
 @end
@@ -2252,9 +1586,7 @@ static void ESPViewAddImageCallback(void *context, UIImage *image, CGRect frame)
 static void *gEngine = (void *)1;
 mach_port_t task;
 
-static std::atomic<bool> g_brutalPatched{false};
-static std::atomic<bool> g_brutalHasAddrs{false};
-
+// ---------- AN TOÀN: heartbeat log ----------
 #define DIAG_EARLY(reason) do { \
     static CFTimeInterval s_lastDiagE = 0; \
     CFTimeInterval nowE = CACurrentMediaTime(); \
@@ -2267,8 +1599,6 @@ static std::atomic<bool> g_brutalHasAddrs{false};
         } \
     } \
 } while (0)
-
-#define ESP_DIAG_BUILD "FLUSH1"
 
 static int g_hbLastReal = -1;
 static int g_hbLastBot  = -1;
@@ -2304,18 +1634,13 @@ static void ESPDiagHeartbeat(void) {
     if (isVaildPtr(cam)) {
         vpOk = GetViewMatrixInto(cam, vp) ? 1 : 0;
     }
-    DSPageCacheDiag cd = ds_page_cache_diag();
-    NSLog(@"[HB] %s base=0x%llx pid=%d at=%d ti=0x%llx st=0x%llx mg=0x%llx cam=0x%llx "
-          @"mt=0x%llx pawn=0x%llx hp=%d real=%d bot=%d "
-          @"cache{g=%llu,live=%d,stale=%d} "
-          @"VP{ok=%d m0=%.4f m3=%.4f m12=%.4f m15=%.4f}",
-          ESP_DIAG_BUILD,
+    NSLog(@"[HB] base=0x%llx pid=%d at=%d ti=0x%llx st=0x%llx mg=0x%llx cam=0x%llx "
+          @"mt=0x%llx pawn=0x%llx hp=%d real=%d bot=%d VP{ok=%d m0=%.4f m3=%.4f m12=%.4f m15=%.4f}",
           (unsigned long long)base, pid, attached,
           (unsigned long long)ti, (unsigned long long)st,
           (unsigned long long)mg, (unsigned long long)cam,
           (unsigned long long)mt, (unsigned long long)pawn, hp,
           g_hbLastReal, g_hbLastBot,
-          (unsigned long long)cd.generation, cd.liveSlots, cd.staleGen,
           vpOk, vp[0], vp[3], vp[12], vp[15]);
 }
 
@@ -2354,6 +1679,26 @@ static void ESPDiagHeartbeat(void) {
         }
     }
     return self;
+}
+
+// ---------- FIX TẮT NGUỒN: dealloc dừng hết thread + release port ----------
+- (void)dealloc {
+    if (self.frameTimer) {
+        dispatch_source_cancel(self.frameTimer);
+        self.frameTimer = nil;
+    }
+    if (self.displayLink) {
+        [self.displayLink invalidate];
+        self.displayLink = nil;
+    }
+    // Dừng thread silent — tránh truy cập mutex sau khi destroy
+    SilentAimStop();
+    AimLockStop();
+    // Release port game nếu còn giữ
+    if (g_target_task != 0) {
+        mach_port_deallocate(mach_task_self(), g_target_task);
+        g_target_task = 0;
+    }
 }
 
 - (void)layoutSubviews {
@@ -2497,6 +1842,10 @@ static void ESPDiagHeartbeat(void) {
     if (layer.contents != (__bridge id)cgImg) layer.contents = (__bridge id)cgImg;
     if (!CGRectEqualToRect(layer.frame, frame)) layer.frame = frame;
 }
+// ============================================================
+// esp.mm — Part 7/8
+// updateFrame — KHÔNG còn BRUTAL PATCH scan 2GB
+// ============================================================
 
 static inline uint64_t ESPPhaseNowUS(void) {
     static mach_timebase_info_data_t tb;
@@ -2576,8 +1925,7 @@ static inline uint64_t ESPPhaseNowUS(void) {
         }
         self.aimAssistLayer.lineWidth = aimAssistThick;
         self.aimAssistLayer.strokeColor = [UIColor colorWithRed:aimAssistR green:aimAssistG blue:aimAssistB alpha:1.0f].CGColor;
-        const bool brutalNeedsFrame = Norecoil || g_brutalPatched.load() || g_brutalHasAddrs.load();
-        if (!isESP && !isESP2 && !isAimbot && !isAimAssist && !isAimSilent && !isSpeed && !isCamPC && !brutalNeedsFrame) {
+        if (!isESP && !isESP2 && !isAimbot && !isAimAssist && !isAimSilent && !isSpeed && !isCamPC) {
             [self clearAllContent];
             if (!self.hidden) self.hidden = YES;
             return;
@@ -2619,11 +1967,16 @@ static inline uint64_t ESPPhaseNowUS(void) {
                         Moudule_Base = (uint64_t)base;
                         s_attachedPid = ds_pid();
                         gEngine = (void *)1;
+                        // Release port cũ khi PID đổi
+                        if (g_target_task != 0) {
+                            mach_port_deallocate(mach_task_self(), g_target_task);
+                            g_target_task = 0;
+                        }
                         NSLog(@"[ESP] Attached to game PID=%d, Moudule_Base=0x%llx", ds_pid(), (unsigned long long)Moudule_Base);
                     } else {
-                        Moudule_Base = 0;
+                        // KHÔNG reset Moudule_Base về 0 — chỉ chờ thêm
                         s_attachedPid = -1;
-                        s_reattachCooldown = 30;
+                        s_reattachCooldown = 5;
                     }
                 }
             }
@@ -2667,66 +2020,11 @@ static inline uint64_t ESPPhaseNowUS(void) {
         MenuViewApplyPath(self.alertLayer, showVisuals ? buffers.alertPath : nil, buffers.alertDirty);
 
         // ============================================================
-        // BRUTAL PATCH — scan + write magic value
+        // BRUTAL PATCH — ĐÃ BỎ HOÀN TOÀN.
+        // Lý do: scan 2GB + malloc size lớn + detach thread + port leak
+        // => nguyên nhân chính gây tắt nguồn / panic.
+        // Nếu cần speed, dùng ToggleSpeedX50Safe() bên dưới.
         // ============================================================
-        {
-            static std::atomic<bool> s_brutalPatched(false);
-            static std::atomic<bool> s_brutalBusy(false);
-            const uint64_t kOriginalVal = 4397530849764387586ULL;
-            const uint64_t kBrutalVal   = 4397530849740000000ULL;
-            bool want = Norecoil;
-            if (!s_brutalBusy.load() && want != s_brutalPatched.load()) {
-                s_brutalBusy.store(true);
-                g_brutalPatched.store(want);
-                g_brutalHasAddrs.store(true);
-                std::thread([want]() {
-                    pid_t pid = (pid_t)GameTargetProcessPid();
-                    if (pid <= 0) { s_brutalBusy.store(false); return; }
-                    task_t tk = 0;
-                    if (task_for_pid(mach_task_self(), pid, &tk) != KERN_SUCCESS) {
-                        s_brutalBusy.store(false); return;
-                    }
-                    uint64_t from = want ? kOriginalVal : kBrutalVal;
-                    uint64_t to   = want ? kBrutalVal   : kOriginalVal;
-                    mach_vm_address_t address = 0x100000000;
-                    mach_vm_size_t size = 0;
-                    vm_region_basic_info_data_64_t info;
-                    mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
-                    mach_port_t object_name;
-                    int written = 0;
-                    while (mach_vm_region(tk, &address, &size,
-                                          VM_REGION_BASIC_INFO_64,
-                                          (vm_region_info_t)&info, &count,
-                                          &object_name) == KERN_SUCCESS) {
-                        if (address > 0x200000000ULL) break;
-                        if ((info.protection & VM_PROT_READ) &&
-                            (info.protection & VM_PROT_WRITE)) {
-                            uint8_t *buf = (uint8_t *)malloc(size);
-                            if (buf) {
-                                mach_vm_size_t br = 0;
-                                if (mach_vm_read_overwrite(tk, address, size,
-                                                           (mach_vm_address_t)buf,
-                                                           &br) == KERN_SUCCESS) {
-                                    for (size_t i = 0; i + 8 <= br; i += 4) {
-                                        uint64_t cur = *(uint64_t *)(buf + i);
-                                        if (cur == from) {
-                                            mach_vm_write(tk, address + i,
-                                                          (vm_offset_t)&to, 8);
-                                            written++;
-                                        }
-                                    }
-                                }
-                                free(buf);
-                            }
-                        }
-                        address += size;
-                    }
-                    NSLog(@"[BRUTAL] %s done — wrote %d addresses",
-                          want ? "ON" : "OFF", written);
-                    s_brutalBusy.store(false);
-                }).detach();
-            }
-        }
 
         static int s_dirtyBox = 0, s_dirtyBone = 0, s_dirtySnap = 0, s_dirtyHpG = 0;
         s_dirtyBox = buffers.boxDirty;
@@ -2745,27 +2043,6 @@ static inline uint64_t ESPPhaseNowUS(void) {
                                           isAimbot && aimSphereMode == 0 && isShowFovCircle, aimFov);
         self.fovLayer.path = hasFov ? fovPath : nil;
         CGPathRelease(fovPath);
-        {
-            static uint32_t s_layerLogTick = 0;
-            if ((++s_layerLogTick % 60u) == 1u) {
-                ESPPathCountCtx bx = {0,0}, bn = {0,0}, sn = {0,0}, fv = {0,0}, am = {0,0};
-                CGPathApply(self.boxLayer.path, &bx, espCountPathElements);
-                CGPathApply(self.boneLayer.path, &bn, espCountPathElements);
-                CGPathApply(self.snaplineLayer.path, &sn, espCountPathElements);
-                CGPathApply(self.fovLayer.path, &fv, espCountPathElements);
-                CGPathApply(self.aimAssistLayer.path, &am, espCountPathElements);
-                NSLog(@"[APP-LAYER] esp=%d esp2=%d box=%d line=%d bone=%d hp=%d show=%d | "
-                      @"box=%u/%u bone=%u/%u snap=%u/%u fov=%u/%u aim=%u/%u | "
-                      @"dirty box=%d bone=%d snap=%d hpG=%d fovNil=%d aimNil=%d",
-                      (int)isESP, (int)isESP2, (int)isBox, (int)isLine, (int)isBone, (int)isHealth,
-                      (int)showVisuals,
-                      bx.n, bx.curves, bn.n, bn.curves, sn.n, sn.curves,
-                      fv.n, fv.curves, am.n, am.curves,
-                      (int)s_dirtyBox, (int)s_dirtyBone,
-                      (int)s_dirtySnap, (int)s_dirtyHpG,
-                      (int)(self.fovLayer.path == nil), (int)(self.aimAssistLayer.path == nil));
-            }
-        }
         if (isCount) {
             NSString *countText;
             UIColor *countColor;
@@ -2840,6 +2117,81 @@ static inline uint64_t ESPPhaseNowUS(void) {
     }
 }
 
+// ============================================================
+// ToggleSpeedX50 SAFE — thay thế bản cũ scan 1.5GB
+// Chunk 4MB, check malloc NULL, check mach_vm_write return
+// ============================================================
+extern "C" void ToggleSpeedX50Safe(bool enable) {
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
+        std::lock_guard<std::mutex> lk(g_patchedMtx);
+        pid_t pid = (pid_t)GameTargetProcessPid();
+        if (pid <= 0) return;
+        task_t tk = 0;
+        if (task_for_pid(mach_task_self(), pid, &tk) != KERN_SUCCESS) {
+            NSLog(@"[HTH Cheat] LỖI: Không lấy được task_for_pid!");
+            return;
+        }
+        uint64_t originalVal = 4397530849764387586ULL;
+        uint64_t hackedVal   = 4397530849740000000ULL;
+        const mach_vm_size_t kChunkMax = 4 * 1024 * 1024; // 4MB
+        if (enable) {
+            g_patchedAddresses.clear();
+            mach_vm_address_t address = 0x100000000;
+            mach_vm_size_t size = 0;
+            vm_region_basic_info_data_64_t info;
+            mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+            mach_port_t object_name;
+            while (mach_vm_region(tk, &address, &size, VM_REGION_BASIC_INFO_64,
+                                  (vm_region_info_t)&info, &count, &object_name) == KERN_SUCCESS) {
+                if (address > 0x160000000) break;
+                if ((info.protection & VM_PROT_READ) && (info.protection & VM_PROT_WRITE)) {
+                    mach_vm_address_t chunkAddr = address;
+                    mach_vm_size_t remain = size;
+                    while (remain > 0) {
+                        mach_vm_size_t chunk = remain > kChunkMax ? kChunkMax : remain;
+                        uint8_t *buffer = (uint8_t *)malloc(chunk);
+                        if (!buffer) { chunkAddr += chunk; remain -= chunk; continue; }
+                        mach_vm_size_t bytesRead = 0;
+                        kern_return_t rk = mach_vm_read_overwrite(tk, chunkAddr, chunk,
+                                                                  (mach_vm_address_t)buffer, &bytesRead);
+                        if (rk == KERN_SUCCESS) {
+                            for (size_t i = 0; i + 8 <= bytesRead; i += 4) {
+                                uint64_t currentValue = *(uint64_t *)(buffer + i);
+                                if (currentValue == originalVal) {
+                                    mach_vm_address_t exactWriteAddress = chunkAddr + i;
+                                    kern_return_t wk = mach_vm_write(tk, exactWriteAddress,
+                                                                     (vm_offset_t)&hackedVal, sizeof(hackedVal));
+                                    if (wk == KERN_SUCCESS) {
+                                        g_patchedAddresses.push_back(exactWriteAddress);
+                                    }
+                                }
+                            }
+                        }
+                        free(buffer);
+                        chunkAddr += chunk;
+                        remain -= chunk;
+                    }
+                }
+                address += size;
+            }
+        } else {
+            if (!g_patchedAddresses.empty()) {
+                for (mach_vm_address_t savedAddr : g_patchedAddresses) {
+                    kern_return_t wk = mach_vm_write(tk, savedAddr,
+                                                     (vm_offset_t)&originalVal, sizeof(originalVal));
+                    (void)wk;
+                }
+                g_patchedAddresses.clear();
+            }
+        }
+        mach_port_deallocate(mach_task_self(), tk);
+    });
+}
+// ============================================================
+// esp.mm — Part 8/8 (FULL)
+// renderESPWithBuffers + aim + getters + prefs + end of file
+// ============================================================
+
 - (ESPFrameStats)renderESPWithBuffers:(ESPGeometryBuffers *)buffers
                             viewWidth:(CGFloat)viewWidth
                            viewHeight:(CGFloat)viewHeight
@@ -2854,23 +2206,31 @@ static inline uint64_t ESPPhaseNowUS(void) {
     CGMutablePathRef aNumGPath  = CGPathCreateMutable();
     CGMutablePathRef aNumOPath  = CGPathCreateMutable();
     CGMutablePathRef aNumRPath  = CGPathCreateMutable();
+
     if (!buffers || Moudule_Base == 0 || Moudule_Base == (uint64_t)-1) {
         DIAG_EARLY(@"no-base");
+        CGPathRelease(aNumBGPath); CGPathRelease(aNumGPath);
+        CGPathRelease(aNumOPath);  CGPathRelease(aNumRPath);
+        if (stats.aimAssistPath) { CGPathRelease(stats.aimAssistPath); stats.aimAssistPath = NULL; }
         return stats;
     }
     uint64_t matchGame = getMatchGame(Moudule_Base);
     if (!isVaildPtr(matchGame)) {
         static int s_lobbyLog = 0;
-        if (++s_lobbyLog % 300 == 1) {
-            NSLog(@"[ESP] Lobby mode: waiting for match...");
-        }
+        if (++s_lobbyLog % 300 == 1) NSLog(@"[ESP] Lobby mode: waiting for match...");
         DIAG_EARLY(@"lobby");
+        CGPathRelease(aNumBGPath); CGPathRelease(aNumGPath);
+        CGPathRelease(aNumOPath);  CGPathRelease(aNumRPath);
+        if (stats.aimAssistPath) { CGPathRelease(stats.aimAssistPath); stats.aimAssistPath = NULL; }
         return stats;
     }
     uint64_t camera = CameraMain(matchGame);
     uint64_t match = getMatch(matchGame);
     if (!isVaildPtr(camera) || !isVaildPtr(match)) {
         DIAG_EARLY(@"loading-match");
+        CGPathRelease(aNumBGPath); CGPathRelease(aNumGPath);
+        CGPathRelease(aNumOPath);  CGPathRelease(aNumRPath);
+        if (stats.aimAssistPath) { CGPathRelease(stats.aimAssistPath); stats.aimAssistPath = NULL; }
         return stats;
     }
     static int s_okLog = 0;
@@ -3006,7 +2366,7 @@ static inline uint64_t ESPPhaseNowUS(void) {
     const bool haveLocalPos = looksLikeWorldPos(myLocation);
     const bool useLocalDistance = haveLocalPos;
 
-    // ⚠️ FIX ESP: Dict walk với 0x148 (FF 1.132.1) + auto-detect stride.
+    // ===== Dict walk =====
     uint64_t playerDict = 0;
     const uint64_t dictOffs[] = {
         (uint64_t)kMatchPlayerDict,
@@ -3031,15 +2391,31 @@ static inline uint64_t ESPPhaseNowUS(void) {
         static int s_noDictLog = 0;
         if (++s_noDictLog % 60 == 1) NSLog(@"[ESP] NO DICT FOUND match=0x%llx",
                                            (unsigned long long)match);
+        CGPathRelease(aNumBGPath); CGPathRelease(aNumGPath);
+        CGPathRelease(aNumOPath);  CGPathRelease(aNumRPath);
+        if (stats.aimAssistPath) { CGPathRelease(stats.aimAssistPath); stats.aimAssistPath = NULL; }
         return stats;
     }
-    int dictCount = ReadAddr<int>(playerDict + kDictCount);
     uint64_t entriesArr = ReadAddr<uint64_t>(playerDict + kDictEntries);
     if (!isVaildPtr(entriesArr)) entriesArr = ReadAddr<uint64_t>(playerDict + 0x18);
     if (!isVaildPtr(entriesArr)) entriesArr = ReadAddr<uint64_t>(playerDict + 0x10);
-    if (!isVaildPtr(entriesArr)) return stats;
+    if (!isVaildPtr(entriesArr)) {
+        static int s_noEntLog = 0;
+        if (++s_noEntLog % 60 == 1) NSLog(@"[ESP] NO ENTRIES dict=0x%llx", (unsigned long long)playerDict);
+        CGPathRelease(aNumBGPath); CGPathRelease(aNumGPath);
+        CGPathRelease(aNumOPath);  CGPathRelease(aNumRPath);
+        if (stats.aimAssistPath) { CGPathRelease(stats.aimAssistPath); stats.aimAssistPath = NULL; }
+        return stats;
+    }
     int slotCap = ReadAddr<int>(entriesArr + kIl2CppArrayMaxLength);
-    if (slotCap <= 0 || slotCap > 2048) return stats;
+    if (slotCap <= 0 || slotCap > 2048) {
+        static int s_badCapLog = 0;
+        if (++s_badCapLog % 60 == 1) NSLog(@"[ESP] BAD CAP=%d entries=0x%llx", slotCap, (unsigned long long)entriesArr);
+        CGPathRelease(aNumBGPath); CGPathRelease(aNumGPath);
+        CGPathRelease(aNumOPath);  CGPathRelease(aNumRPath);
+        if (stats.aimAssistPath) { CGPathRelease(stats.aimAssistPath); stats.aimAssistPath = NULL; }
+        return stats;
+    }
     float matrixData[16];
     memset(matrixData, 0, sizeof(matrixData));
     EspPawnSnap snaps[128];
@@ -3059,7 +2435,6 @@ static inline uint64_t ESPPhaseNowUS(void) {
     AimWallOffFrameBegin(myPawnObject, myLocation);
     const bool useAssist = isAimAssist;
     const bool useAssistOnly = isAimAssist && !isAimbot;
-    // ⚠️ FIX: Silent độc lập — bỏ wall gate.
     bool useSilent = isAimSilent;
     bool useAim = (isAimbot || useAssist || useSilent);
     const bool useAim180 = isAimbot && aimSphereMode == 1;
@@ -3457,14 +2832,11 @@ static inline uint64_t ESPPhaseNowUS(void) {
               snapN, stats.realCount, stats.botCount);
     }
     if (!GetViewMatrixInto(camera, matrixData)) {
-        CGPathRelease(aNumBGPath);
-        CGPathRelease(aNumGPath);
-        CGPathRelease(aNumOPath);
-        CGPathRelease(aNumRPath);
-        if (stats.aimAssistPath) {
-            CGPathRelease(stats.aimAssistPath);
-            stats.aimAssistPath = NULL;
-        }
+        static int s_noVpLog = 0;
+        if (++s_noVpLog % 60 == 1) NSLog(@"[ESP] NO VIEW MATRIX camera=0x%llx", (unsigned long long)camera);
+        CGPathRelease(aNumBGPath); CGPathRelease(aNumGPath);
+        CGPathRelease(aNumOPath);  CGPathRelease(aNumRPath);
+        if (stats.aimAssistPath) { CGPathRelease(stats.aimAssistPath); stats.aimAssistPath = NULL; }
         return stats;
     }
     const int crowdN = snapN;
@@ -3536,9 +2908,7 @@ static inline uint64_t ESPPhaseNowUS(void) {
                 CGPathAddArc(tempArc, NULL, edgeX, edgeY, radius, startAngle, endAngle, false);
                 CGPathAddPath(targetArc, NULL, tempArc);
                 CGPathRelease(tempArc);
-                NSData *distTextBytes = [@"[%dM]" dataUsingEncoding:NSUTF8StringEncoding];
-                NSString *distTextFormat = [[NSString alloc] initWithData:distTextBytes encoding:NSUTF8StringEncoding];
-                NSString *distText = [NSString stringWithFormat:distTextFormat, (int)s.dis];
+                NSString *distText = [NSString stringWithFormat:@"[%dM]", (int)s.dis];
                 CGRect textFrame = CGRectMake(edgeX - radius, edgeY - 4.5f, radius * 2.0f, 10.0f);
                 ESPViewAddTextCallback((__bridge void *)self, distText, textFrame, [UIColor whiteColor], 8.0f, NO);
             }
@@ -3666,6 +3036,10 @@ static inline uint64_t ESPPhaseNowUS(void) {
                                s.isBot ? 1 : 0, s.isKnocked ? 1 : 0);
         }
     }
+
+    // ============================================================
+    // AIM SELECTION
+    // ============================================================
     const bool allowThroughWall = AimThroughAnyCoverNow();
     if (iAmAlive && useAim) {
         for (int si = 0; si < snapN; si++) {
@@ -4027,22 +3401,6 @@ static inline uint64_t ESPPhaseNowUS(void) {
         s_lockHoldFrames = 0;
         s_lockScore = rawBestScore;
     }
-    {
-        static CFTimeInterval s_lastAimDiag = 0;
-        CFTimeInterval nowAd = CACurrentMediaTime();
-        if (nowAd - s_lastAimDiag > 5.0) {
-            s_lastAimDiag = nowAd;
-            kernel_boot_log_fn logFnA = kernelBootLog;
-            if (logFnA) {
-                NSString *lineA = [NSString stringWithFormat:
-                    @"[aim] snaps=%d pick=%llu dis=%.0f trig=%d aimbot=%d silent=%d",
-                    snapN, (unsigned long long)bestTarget,
-                    bestDistance < FLT_MAX ? bestDistance : 0.f,
-                    triggerMode, (int)isAimbot, (int)isAimSilent];
-                dispatch_async(dispatch_get_main_queue(), ^{ logFnA(lineA); });
-            }
-        }
-    }
     auto AimTargetStillValid = [&](uint64_t pawn) -> bool {
         if (!isVaildPtr(pawn)) return false;
         int hp = get_CurHP(pawn);
@@ -4173,7 +3531,6 @@ static inline uint64_t ESPPhaseNowUS(void) {
          (cameraAimActive && (isFiring || isScoping)))) {
         ZeroWeaponScatterForAim(myPawnObject);
     }
-    // ⚠️ FIX: Bỏ wall gate cho silent.
     if (silentActive && bestTarget != 0 && AimTargetStillValid(bestTarget)) {
         Vector3 silentBone = ResolveSilentAimWorldPos(bestTarget, aimPosition);
         if (!IsZeroVec(silentBone) && bestDistance >= 0.15f) {
@@ -4327,6 +3684,10 @@ static inline uint64_t ESPPhaseNowUS(void) {
     return stats;
 }
 
+// ============================================================
+// Getters / setters / prefs
+// ============================================================
+
 Quaternion GetRotationToLocation(Vector3 targetLocation, float y_bias, Vector3 myLoc) {
     Vector3 direction = (targetLocation + Vector3(0, y_bias, 0)) - myLoc;
     return Quaternion::LookRotation(direction, Vector3(0, 1, 0));
@@ -4398,12 +3759,368 @@ bool get_IsFPPVisible(uint64_t player) {
     return (m_Value & 0x1u) != 0;
 }
 
+// ============================================================
+// write_aim_rotations — ĐÃ RÚT GỌN, chỉ ghi 2 offset cần thiết
+// ============================================================
+static void write_aim_rotations(uint64_t player, const Quaternion &out) {
+    if (!isVaildPtr(player)) return;
+    WriteAddr<Quaternion>(player + kAimRotation, out);
+    WriteAddr<Quaternion>(player + kCurrentAimRotation, out);
+    // Chỉ ghi thêm 2 offset fallback nếu offset chính khác
+    if (kAimRotation != 0x5B4) {
+        WriteAddr<Quaternion>(player + 0x5B4, out);
+    }
+    if (kCurrentAimRotation != 0x19A4) {
+        WriteAddr<Quaternion>(player + 0x19A4, out);
+    }
+}
+
+void set_aim(uint64_t player, Quaternion rotation, float speed, int mode, bool forceInstant) {
+    if (!isVaildPtr(player)) return;
+    Quaternion q = Quaternion::Normalized(rotation);
+    if (isnan(q.x) || isnan(q.y) || isnan(q.z) || isnan(q.w)) return;
+    const bool hardLock = forceInstant || mode >= 1 || speed >= 0.75f;
+    if (hardLock) {
+        write_aim_rotations(player, q);
+        return;
+    }
+    Quaternion current = ReadAddr<Quaternion>(player + kAimRotation);
+    float n = current.x * current.x + current.y * current.y + current.z * current.z + current.w * current.w;
+    if (!(n > 0.0001f) || isnan(n)) {
+        write_aim_rotations(player, q);
+        return;
+    }
+    current = Quaternion::Normalized(current);
+    float angle = Quaternion::Angle(current, q);
+    if (isnan(angle) || angle < 0.0005f) {
+        write_aim_rotations(player, q);
+        return;
+    }
+    float s = Clamp01f(speed);
+    float base = 0.55f + 0.45f * s;
+    if (angle > 0.08f) base = fmaxf(base, 0.90f);
+    float t = fminf(1.0f, base);
+    Quaternion out = Quaternion::Normalized(Quaternion::Slerp(current, q, t));
+    if (isnan(out.x) || isnan(out.y) || isnan(out.z) || isnan(out.w)) return;
+    write_aim_rotations(player, out);
+}
+
+static float g_aaSavedKnol = 0.f;
+static float g_aaSavedNfk  = 0.f;
+static bool  g_aaLegitBoostActive = false;
+
+void update_aim_assist_legit_tuning(bool enable) {
+    if (enable == g_aaLegitBoostActive) return;
+    if (Moudule_Base == (uint64_t)-1 || Moudule_Base == 0 || !isVaildPtr(Moudule_Base)) {
+        g_aaLegitBoostActive = false;
+        return;
+    }
+    uint64_t typeInfo = ReadAddr<uint64_t>(Moudule_Base + kAimAssistTypeInfo);
+    if (!isVaildPtr(typeInfo)) return;
+    uint64_t statics = ReadAddr<uint64_t>(typeInfo + kTypeInfoStatics);
+    if (!isVaildPtr(statics)) return;
+    if (!enable) {
+        if (g_aaLegitBoostActive) {
+            WriteAddr<float>(statics + kAaStaticKnolgmjlcef, g_aaSavedKnol);
+            WriteAddr<float>(statics + kAaStaticNfkcllpalej, g_aaSavedNfk);
+            g_aaLegitBoostActive = false;
+        }
+        return;
+    }
+    g_aaSavedKnol = ReadAddr<float>(statics + kAaStaticKnolgmjlcef);
+    g_aaSavedNfk  = ReadAddr<float>(statics + kAaStaticNfkcllpalej);
+    WriteAddr<float>(statics + kAaStaticKnolgmjlcef, g_aaSavedKnol * 0.88f);
+    WriteAddr<float>(statics + kAaStaticNfkcllpalej, g_aaSavedNfk * 1.18f);
+    g_aaLegitBoostActive = true;
+}
+
+static float esp_aim_delta_time(void) {
+    static CFTimeInterval s_last = 0.0;
+    const CFTimeInterval now = CACurrentMediaTime();
+    float dt = (s_last > 0.0) ? (float)(now - s_last) : (1.f / 60.f);
+    s_last = now;
+    if (dt <= 0.f || dt > 0.25f) dt = 1.f / 60.f;
+    return dt;
+}
+
+static float legit_aim_blend_t(float angleRad, float speed01, float targetDistance, float maxAimDistance) {
+    const float dt = esp_aim_delta_time();
+    const float dtScale = fminf(fmaxf(dt * 60.f, 0.5f), 2.f);
+    const float refAngle = 40.f * 3.14159265f / 180.f;
+    const float angleNorm = fminf(angleRad / refAngle, 1.f);
+    const float angleEase = 0.28f + 0.72f * (1.f - powf(angleNorm, 1.25f));
+    const float speedCurve = 0.035f + 0.32f * powf(speed01, 1.2f);
+    const float distNorm = Clamp01f(targetDistance / fmaxf(maxAimDistance, 1.f));
+    const float distBias = 0.90f + 0.10f * (1.f - distNorm);
+    float t = speedCurve * angleEase * distBias * dtScale;
+    const float kMicroAngleRad = 1.5f * 3.14159265f / 180.f;
+    if (angleRad < kMicroAngleRad) t *= 0.55f;
+    const float maxT = (0.10f + 0.22f * speed01) * dtScale;
+    const float minT = 0.012f * dtScale;
+    if (t < minT) t = minT;
+    if (t > maxT) t = maxT;
+    return t;
+}
+
+void set_aim_legit(uint64_t player, Quaternion rotation, float targetDistance) {
+    if (!isVaildPtr(player)) return;
+    Quaternion q = Quaternion::Normalized(rotation);
+    if (isnan(q.x) || isnan(q.y) || isnan(q.z) || isnan(q.w)) return;
+    Quaternion current = ReadAddr<Quaternion>(player + kAimRotation);
+    float n = current.x * current.x + current.y * current.y + current.z * current.z + current.w * current.w;
+    if (!(n > 0.0001f) || isnan(n)) {
+        write_aim_rotations(player, q);
+        return;
+    }
+    current = Quaternion::Normalized(current);
+    float angle = Quaternion::Angle(current, q);
+    if (isnan(angle)) return;
+    if (angle < 0.0015f) return;
+    float s = Clamp01f(aimSpeed);
+    float t = legit_aim_blend_t(angle, s, targetDistance, aimDistance);
+    Quaternion blended = Quaternion::Slerp(current, q, t);
+    Quaternion out = Quaternion::Normalized(blended);
+    if (isnan(out.x) || isnan(out.y) || isnan(out.z) || isnan(out.w)) return;
+    write_aim_rotations(player, out);
+}
+
+static UIFont *LoadCountFont(CGFloat size) {
+    static BOOL fontLoaded = NO;
+    static NSString *realFontName = @"Arial-BoldMT";
+    if (!fontLoaded) {
+        NSString *fontPath = [[[NSBundle mainBundle] bundlePath] stringByAppendingPathComponent:@"Font/count.ttf"];
+        if ([[NSFileManager defaultManager] fileExistsAtPath:fontPath]) {
+            CGDataProviderRef fontDataProvider = CGDataProviderCreateWithFilename([fontPath UTF8String]);
+            if (fontDataProvider) {
+                CGFontRef customFont = CGFontCreateWithDataProvider(fontDataProvider);
+                if (customFont) {
+                    CTFontManagerRegisterGraphicsFont(customFont, nil);
+                    NSString *postScriptName = (__bridge_transfer NSString *)CGFontCopyPostScriptName(customFont);
+                    if (postScriptName) { realFontName = postScriptName; }
+                    CGFontRelease(customFont);
+                }
+                CGDataProviderRelease(fontDataProvider);
+            }
+        }
+        fontLoaded = YES;
+    }
+    UIFont *font = [UIFont fontWithName:realFontName size:size];
+    return font ? font : [UIFont boldSystemFontOfSize:size];
+}
+
+static inline CGMutablePathRef ESPCreateMutablePath(void) { return CGPathCreateMutable(); }
+static inline void ESPReleasePath(CGMutablePathRef path) { if (path) CGPathRelease(path); }
+
+static inline ESPGeometryBuffers ESPGeometryBuffersCreate(void) {
+    ESPGeometryBuffers buffers;
+    buffers.boxPath = ESPCreateMutablePath();
+    buffers.boxBotPath = ESPCreateMutablePath();
+    buffers.boxKnockedPath = ESPCreateMutablePath();
+    buffers.bonePath = ESPCreateMutablePath();
+    buffers.boneBotPath = ESPCreateMutablePath();
+    buffers.boneKnockedPath = ESPCreateMutablePath();
+    buffers.snaplinePath = ESPCreateMutablePath();
+    buffers.snaplineBotPath = ESPCreateMutablePath();
+    buffers.snaplineKnockedPath = ESPCreateMutablePath();
+    buffers.hpFillGreenPath = ESPCreateMutablePath();
+    buffers.hpFillOrangePath = ESPCreateMutablePath();
+    buffers.hpFillRedPath = ESPCreateMutablePath();
+    buffers.bgFillBlackPath = ESPCreateMutablePath();
+    buffers.alertPath = ESPCreateMutablePath();
+    buffers.boxDirty = buffers.boxBotDirty = buffers.boxKnockedDirty = NO;
+    buffers.boneDirty = buffers.boneBotDirty = buffers.boneKnockedDirty = NO;
+    buffers.snaplineDirty = buffers.snaplineBotDirty = buffers.snaplineKnockedDirty = NO;
+    buffers.hpFillGreenDirty = buffers.hpFillOrangeDirty = buffers.hpFillRedDirty = NO;
+    buffers.bgFillBlackDirty = buffers.alertDirty = NO;
+    return buffers;
+}
+
+typedef struct { uint32_t n; uint32_t curves; } ESPPathCountCtx;
+static void espCountPathElements(void *info, const CGPathElement *e) {
+    ESPPathCountCtx *c = (ESPPathCountCtx *)info;
+    if (!c) return;
+    c->n++;
+    if (e->type == kCGPathElementAddCurveToPoint ||
+        e->type == kCGPathElementAddQuadCurveToPoint) c->curves++;
+}
+
+static inline void ESPGeometryBuffersRelease(ESPGeometryBuffers *buffers) {
+    if (!buffers) return;
+    ESPReleasePath(buffers->boxPath); ESPReleasePath(buffers->boxBotPath); ESPReleasePath(buffers->boxKnockedPath);
+    ESPReleasePath(buffers->bonePath); ESPReleasePath(buffers->boneBotPath); ESPReleasePath(buffers->boneKnockedPath);
+    ESPReleasePath(buffers->snaplinePath); ESPReleasePath(buffers->snaplineBotPath);
+    ESPReleasePath(buffers->snaplineKnockedPath); ESPReleasePath(buffers->hpFillGreenPath);
+    ESPReleasePath(buffers->hpFillOrangePath); ESPReleasePath(buffers->hpFillRedPath);
+    ESPReleasePath(buffers->bgFillBlackPath); ESPReleasePath(buffers->alertPath);
+}
+
+static inline void MenuViewApplyPath(CAShapeLayer *layer, CGMutablePathRef path, bool dirty) {
+    if (!layer) return;
+    if (dirty && path) { layer.path = path; }
+    else if (layer.path != nil) { layer.path = nil; }
+}
+
+static int syncTick = 0;
+static bool s_setNameEnabledGlobal = false;
+static NSString *s_customNameGlobal = nil;
+
+void ESPSyncFromPrefs(void) {
+    static CFTimeInterval s_lastFullSync = 0;
+    CFTimeInterval nowSync = CACurrentMediaTime();
+    if (s_lastFullSync > 0 && (nowSync - s_lastFullSync) < 0.05) return;
+    s_lastFullSync = nowSync;
+    (void)syncTick;
+
+    isStreamerMode = ESPPrefsBool(@"StreamerMode", NO);
+    Norecoil   = ESPPrefsBool(@"Norecoil", NO);
+    {
+        float bs = ESPPrefsFloat(@"BrutalSpeed", 0.16f);
+        if (bs < 0.05f) bs = 0.05f;
+        if (bs > 0.80f) bs = 0.80f;
+        speedvalue = Norecoil ? bs : 1.0f;
+    }
+    isSpeed = ESPPrefsBool(@"Speed", NO);
+    moveSpeedScale = ESPPrefsFloat(@"SpeedValue", 1.22f);
+    if (moveSpeedScale < 1.0f) moveSpeedScale = 1.0f;
+    if (moveSpeedScale > 1.45f) moveSpeedScale = 1.45f;
+    if (!isSpeed) moveSpeedScale = 1.0f;
+    if (Norecoil) {
+        isSpeed = NO;
+        moveSpeedScale = 1.0f;
+    }
+    isShowFovCircle = ESPPrefsBool(@"ShowFovCircle", YES);
+    isESP      = ESPPrefsBool(@"EnableESP", YES);
+    isESP2     = ESPPrefsBool(@"EnableESP2", NO);
+    isBox      = ESPPrefsBool(@"Box", YES);
+    boxMode    = (int)ESPPrefsFloat(@"BoxMode", 0.0f);
+    isBone     = ESPPrefsBool(@"Bone", YES);
+    isHealth   = ESPPrefsBool(@"Health", YES);
+    isName     = ESPPrefsBool(@"Name", YES);
+    isDis      = ESPPrefsBool(@"Distance", YES);
+    isLine     = ESPPrefsBool(@"Line", YES);
+    isEspBot   = ESPPrefsBool(@"EspBot", YES);
+    isWeapon   = ESPPrefsBool(@"Weapon", NO);
+    isCount    = ESPPrefsBool(@"Count", YES);
+    isAlert360 = ESPPrefsBool(@"Alert360", NO);
+    isAlertNum = ESPPrefsBool(@"AlertNum", NO);
+    isEspCheckVisible = ESPPrefsBool(@"EspCheckVisible", NO);
+    {
+        BOOL aimOnBot = YES;
+        id aimOnBotPref = AppSettingsObjectForKey(@"AimOnBot");
+        if (aimOnBotPref != nil) {
+            aimOnBot = ESPPrefsBool(@"AimOnBot", YES);
+        } else {
+            aimOnBot = !ESPPrefsBool(@"AimIgnoreBot", NO);
+        }
+        isAimIgnoreBot = !aimOnBot;
+        if (aimOnBot) isEspBot = YES;
+    }
+    isAimIgnoreKnock = ESPPrefsBool(@"AimIgnoreKnock", NO);
+    isAimBehindWall = ESPPrefsBool(@"AimBehindWall", NO);
+    isAimRage = ESPPrefsBool(@"AimRage", NO);
+    isAimbot    = ESPPrefsBool(@"Aimbot", NO);
+    isAimAssist = ESPPrefsBool(@"AimAssist", NO);
+    isAimLegit  = ESPPrefsBool(@"AimLegit", NO);
+    if (isAimbot && isAimLegit) {
+        isAimLegit = NO;
+    } else if (!isAimbot && isAimAssist && isAimLegit) {
+        isAimLegit = NO;
+    }
+    {
+        int mode = (int)ESPPrefsFloat(@"AimSphereMode", -1.0f);
+        if (mode < 0) {
+            mode = ESPPrefsBool(@"Aim360", NO) ? 2 : 0;
+        }
+        if (mode < 0) mode = 0;
+        if (mode > 2) mode = 2;
+        aimSphereMode = isAimbot ? mode : 0;
+    }
+    bool wasSilent = isAimSilent;
+    isAimSilent = ESPPrefsBool(@"AimSilent", NO);
+    if (wasSilent && !isAimSilent) {
+        SilentAimStop();
+    }
+    isFastReload = ESPPrefsBool(@"FastReload", NO);
+    fastReloadSpeed = ESPPrefsFloat(@"FastReloadSpeed", 1.0f);
+    isCamPC    = ESPPrefsBool(@"CamPC", NO);
+    camPCValue = ESPPrefsFloat(@"CamPCValue", 30.0f);
+    if (camPCValue < 0.0f) camPCValue = 0.0f;
+    if (camPCValue > 150.0f) camPCValue = 150.0f;
+    aimMode = (int)ESPPrefsFloat(@"AimMode", 1.0f);
+    triggerMode = (int)ESPPrefsFloat(@"TriggerMode", 0.0f);
+    if (triggerMode < 0) triggerMode = 0;
+    if (triggerMode > 3) triggerMode = 3;
+    aimPosition = (int)ESPPrefsFloat(@"AimPos", 0.0f);
+    if (aimPosition < 0) aimPosition = 0;
+    if (aimPosition > 2) aimPosition = 2;
+    aimTargetMode = (int)ESPPrefsFloat(@"AimTargetMode", 0.0f);
+    aimFov = ESPPrefsFloat(@"Fov", 150.0f);
+    if (aimFov <= 1.0f) aimFov = 150.0f;
+    aimDistance = ESPPrefsFloat(@"AimDistance", -1.0f);
+    if (aimDistance < 0.0f) {
+        id legacy = AppSettingsObjectForKey(@"Distance");
+        if ([legacy isKindOfClass:[NSNumber class]] && [(NSNumber *)legacy floatValue] > 1.5f) {
+            aimDistance = [(NSNumber *)legacy floatValue];
+        } else {
+            aimDistance = 200.0f;
+        }
+    }
+    if (aimDistance <= 1.0f) aimDistance = 200.0f;
+    aimSpeed = ESPPrefsFloat(@"AimSpeed", 100.0f) / 100.0f;
+    if (aimSpeed < 0.01f) aimSpeed = 0.01f;
+    if (aimSpeed > 1.0f) aimSpeed = 1.0f;
+    espDistanceLimit = ESPPrefsFloat(@"EspDistanceLimit", 150.0f);
+    if (espDistanceLimit < 10.0f) espDistanceLimit = 150.0f;
+    s_setNameEnabledGlobal = ESPPrefsBool(@"SetName", NO);
+    NSString *customDefault = @"@Bolaminhduc";
+    NSString *newName = AppSettingsObjectForKey(@"CustomName");
+    if (![newName isKindOfClass:[NSString class]] || ((NSString *)newName).length == 0 ||
+        [newName containsString:@"thanhhoa"] || [newName containsString:@"Thanhhoa"] ||
+        [newName containsString:@"Ng_thanhhoa"] || [newName containsString:@"ng_thanhhoa"]) {
+        newName = customDefault;
+    }
+    if (![newName isEqualToString:s_customNameGlobal]) {
+        s_customNameGlobal = newName;
+    }
+    int menuStyle = (int)ESPPrefsFloat(@"MenuLayoutStyle", 0.0f);
+    if (menuStyle == 1) {
+        isEspBot = YES;
+        isAimIgnoreBot = NO;
+        isAimIgnoreKnock = YES;
+        isEspCheckVisible = YES;
+    }
+    boxThick = ESPPrefsFloat(@"BoxThickness", 1.0f);
+    boxR = ESPPrefsFloat(@"BoxColorR", 0.0f); boxG = ESPPrefsFloat(@"BoxColorG", 1.0f); boxB = ESPPrefsFloat(@"BoxColorB", 1.0f);
+    boxColorMode = (int)ESPPrefsFloat(@"BoxColorMode", 0.0f);
+    if (boxColorMode < 0) boxColorMode = 0;
+    if (boxColorMode > 1) boxColorMode = 1;
+    boneThick = ESPPrefsFloat(@"BoneThickness", 1.0f);
+    boneR = ESPPrefsFloat(@"BoneColorR", 0.0f); boneG = ESPPrefsFloat(@"BoneColorG", 1.0f); boneB = ESPPrefsFloat(@"BoneColorB", 1.0f);
+    boneColorMode = (int)ESPPrefsFloat(@"BoneColorMode", 0.0f);
+    if (boneColorMode < 0) boneColorMode = 0;
+    if (boneColorMode > 1) boneColorMode = 1;
+    lineThick = ESPPrefsFloat(@"LineThickness", 1.0f);
+    lineR = ESPPrefsFloat(@"LineColorR", 0.0f); lineG = ESPPrefsFloat(@"LineColorG", 1.0f); lineB = ESPPrefsFloat(@"LineColorB", 1.0f);
+    lineColorMode = (int)ESPPrefsFloat(@"LineColorMode", 0.0f);
+    if (lineColorMode < 0) lineColorMode = 0;
+    if (lineColorMode > 1) lineColorMode = 1;
+    fovThick = ESPPrefsFloat(@"FovThickness", 0.6f);
+    fovR = ESPPrefsFloat(@"FovColorR", 1.0f); fovG = ESPPrefsFloat(@"FovColorG", 1.0f); fovB = ESPPrefsFloat(@"FovColorB", 0.0f);
+    fovColorMode = (int)ESPPrefsFloat(@"FovColorMode", 0.0f);
+    if (fovColorMode < 0) fovColorMode = 0;
+    if (fovColorMode > 1) fovColorMode = 1;
+    aimAssistThick = ESPPrefsFloat(@"AimAssistThickness", 1.5f);
+    aimAssistR = ESPPrefsFloat(@"AimAssistColorR", 0.0f); aimAssistG = ESPPrefsFloat(@"AimAssistColorG", 1.0f); aimAssistB = ESPPrefsFloat(@"AimAssistColorB", 1.0f);
+}
+
+// ============================================================
+// EnableCamPC
+// ============================================================
 void EnableCamPC(uint64_t localPlayerPawn, bool isEnabled, float campcValue) {
     if (!isVaildPtr(localPlayerPawn)) {
         s_lastFollowCameraObj = 0;
         return;
     }
-    // 0x628 = AimRotationAux (SAI). FollowCamera = 0x690.
     uint64_t FollowCameraObj = ReadAddr<uint64_t>(localPlayerPawn + kFollowCameraObj);
     if (isVaildPtr(FollowCameraObj)) {
         if (isEnabled && campcValue > 0.0f) {
@@ -4417,4 +4134,78 @@ void EnableCamPC(uint64_t localPlayerPawn, bool isEnabled, float campcValue) {
         s_lastFollowCameraObj = 0;
     }
 }
+
+// ============================================================
+// ToggleSpeedX50Safe — bản an toàn thay thế ToggleSpeedX50 cũ
+// ============================================================
+extern "C" void ToggleSpeedX50Safe(bool enable) {
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
+        std::lock_guard<std::mutex> lk(g_patchedMtx);
+        pid_t pid = (pid_t)GameTargetProcessPid();
+        if (pid <= 0) return;
+        task_t tk = 0;
+        if (task_for_pid(mach_task_self(), pid, &tk) != KERN_SUCCESS) {
+            NSLog(@"[HTH Cheat] LỖI: Không lấy được task_for_pid!");
+            return;
+        }
+        uint64_t originalVal = 4397530849764387586ULL;
+        uint64_t hackedVal   = 4397530849740000000ULL;
+        const mach_vm_size_t kChunkMax = 4 * 1024 * 1024;
+        if (enable) {
+            g_patchedAddresses.clear();
+            mach_vm_address_t address = 0x100000000;
+            mach_vm_size_t size = 0;
+            vm_region_basic_info_data_64_t info;
+            mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+            mach_port_t object_name;
+            while (mach_vm_region(tk, &address, &size, VM_REGION_BASIC_INFO_64,
+                                  (vm_region_info_t)&info, &count, &object_name) == KERN_SUCCESS) {
+                if (address > 0x160000000) break;
+                if ((info.protection & VM_PROT_READ) && (info.protection & VM_PROT_WRITE)) {
+                    mach_vm_address_t chunkAddr = address;
+                    mach_vm_size_t remain = size;
+                    while (remain > 0) {
+                        mach_vm_size_t chunk = remain > kChunkMax ? kChunkMax : remain;
+                        uint8_t *buffer = (uint8_t *)malloc(chunk);
+                        if (!buffer) { chunkAddr += chunk; remain -= chunk; continue; }
+                        mach_vm_size_t bytesRead = 0;
+                        kern_return_t rk = mach_vm_read_overwrite(tk, chunkAddr, chunk,
+                                                                  (mach_vm_address_t)buffer, &bytesRead);
+                        if (rk == KERN_SUCCESS) {
+                            for (size_t i = 0; i + 8 <= bytesRead; i += 4) {
+                                uint64_t currentValue = *(uint64_t *)(buffer + i);
+                                if (currentValue == originalVal) {
+                                    mach_vm_address_t exactWriteAddress = chunkAddr + i;
+                                    kern_return_t wk = mach_vm_write(tk, exactWriteAddress,
+                                                                     (vm_offset_t)&hackedVal, sizeof(hackedVal));
+                                    if (wk == KERN_SUCCESS) {
+                                        g_patchedAddresses.push_back(exactWriteAddress);
+                                    }
+                                }
+                            }
+                        }
+                        free(buffer);
+                        chunkAddr += chunk;
+                        remain -= chunk;
+                    }
+                }
+                address += size;
+            }
+        } else {
+            if (!g_patchedAddresses.empty()) {
+                for (mach_vm_address_t savedAddr : g_patchedAddresses) {
+                    kern_return_t wk = mach_vm_write(tk, savedAddr,
+                                                     (vm_offset_t)&originalVal, sizeof(originalVal));
+                    (void)wk;
+                }
+                g_patchedAddresses.clear();
+            }
+        }
+        mach_port_deallocate(mach_task_self(), tk);
+    });
+}
+
+// ============================================================
+// END OF FILE
+// ============================================================
 @end
