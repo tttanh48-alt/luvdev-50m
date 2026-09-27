@@ -1,6 +1,5 @@
 // ============================================================
 // esp.mm — Part 1/8
-// Header + extern + forward decl + globals
 // ============================================================
 
 #import "esp.h"
@@ -86,6 +85,10 @@ bool get_IsVisible(uint64_t player);
 bool get_IsFPPVisible(uint64_t player);
 static inline uint32_t get_VisibleFlags(uint64_t player);
 
+// ---------- Patched addresses (dùng cho ToggleSpeedX50Safe) ----------
+static std::vector<mach_vm_address_t> g_patchedAddresses;
+static std::mutex                     g_patchedMtx;
+
 // ---------- Silent aim state ----------
 bool isAimBehindWall = NO;
 
@@ -130,6 +133,58 @@ static inline uint64_t kLastAimingTargetFromWeaponOff(void) {
     return off ? off : (GameTargetIsMax() ? 0xDE8ull : 0xDE0ull);
 }
 
+// ---------- Global config variables (ESP + Aim) ----------
+uint64_t Moudule_Base = -1;
+int g_PlayerDrawIndex = 1;
+
+bool isESP = YES;
+bool isESP2 = NO;
+bool isBox = YES; bool isBone = YES; bool isHealth = YES;
+int boxMode = 0;
+bool isName = YES; bool isDis = YES; bool isLine = YES;
+bool isEspBot = NO; bool isWeapon = NO; bool isCount = YES;
+bool isAlert360 = NO;
+bool isAlertNum = NO;
+bool Norecoil = NO;
+bool isSpeed = NO;
+float speedvalue = 1.0f;
+float moveSpeedScale = 1.0f;
+bool isShowFovCircle = YES;
+bool isEspCheckVisible = NO;
+bool isAimIgnoreBot = NO; bool isAimIgnoreKnock = NO;
+bool isAimRage = NO; bool isFastReload = NO;
+bool isAimLegit = NO;
+float fastReloadSpeed = 1.0f;
+
+bool isCamPC = NO; float camPCValue = 30.0f;
+static uint64_t s_lastFollowCameraObj = 0;
+
+bool isAimbot = NO; bool isAimAssist = NO;
+bool isAimSilent = NO;
+int aimSphereMode = 0;
+int triggerMode = 0; int aimPosition = 0;
+int aimTargetMode = 0; float aimFov = 150.0f;
+float aimDistance = 200.0f; float aimSpeed = 1.0f;
+int aimMode = 1;
+
+bool isStreamerMode = NO;
+
+float espDistanceLimit = 150.0f;
+float boxThick = 1.0f;
+float boxR = 0.0f, boxG = 1.0f, boxB = 1.0f;
+int boxColorMode = 0;
+float boneThick = 1.2f;
+float boneR = 0.0f, boneG = 1.0f, boneB = 1.0f;
+int boneColorMode = 0;
+float lineThick = 1.0f;
+float lineR = 0.0f, lineG = 1.0f, lineB = 1.0f;
+int lineColorMode = 0;
+float fovThick = 0.6f;
+float fovR = 1.0f, fovG = 1.0f, fovB = 0.0f;
+int fovColorMode = 0;
+float aimAssistThick = 1.5f;
+float aimAssistR = 0.0f, aimAssistG = 1.0f, aimAssistB = 1.0f;
+
 // ---------- Weapon raycast ----------
 struct GameWeaponRaycast {
     bool valid = false;
@@ -139,7 +194,6 @@ struct GameWeaponRaycast {
 
 // ============================================================
 // esp.mm — Part 2/8
-// Raycast + wall check + visibility helpers
 // ============================================================
 
 static inline GameWeaponRaycast SampleLocalWeaponRaycast(uint64_t localPawn, const Vector3 &fallbackOrigin) {
@@ -282,15 +336,12 @@ static inline bool AimTargetVisibleForWallOff(uint64_t player) {
     return true;
 }
 
-// Silent luôn cho phép, độc lập wall
 static inline bool AimTargetVisibleStrictForSilent(uint64_t player) {
     (void)player;
     return true;
 }
-
 // ============================================================
 // esp.mm — Part 3/8
-// Position resolve helpers
 // ============================================================
 
 static inline Vector3 tryTransformPos(uint64_t nodeOrTf) {
@@ -538,10 +589,8 @@ static inline Vector3 ResolvePawnWorldPosAny(uint64_t pawn) {
     }
     return Vector3{0, 0, 0};
 }
-
 // ============================================================
 // esp.mm — Part 4/8
-// Head/hip resolve + AimLookAtHeadLive
 // ============================================================
 
 static inline Vector3 ResolveHeadWorldPosTracked(uint64_t pawn);
@@ -796,7 +845,6 @@ static void SilentAimThread(uint64_t localPlayer) {
                 }
             }
             if (!IsZeroVec(targetPos)) {
-                // Giảm từ 10 → 2 để tránh write quá nhiều
                 for (int i = 0; i < 2; i++) {
                     SilentForcePrimary(lp, fromLoc, targetPos);
                 }
@@ -804,7 +852,6 @@ static void SilentAimThread(uint64_t localPlayer) {
         } else {
             g_lastAimingInfo = 0;
         }
-        // Sleep 2ms — tránh CPU 100% → tránh tắt nguồn do nhiệt
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
 }
@@ -860,12 +907,9 @@ static void SilentAimStop(void) {
     g_silentAimPosMode = 0;
 }
 
-// ---------- Aim lock thread ĐÃ BỎ HOÀN TOÀN ----------
-// Ghi rotation chỉ trong updateFrame, không dùng thread riêng.
-// => Giảm 1500 write/giây, tránh panic do VM pressure.
+// ---------- Aim lock: no-op (đã bỏ thread) ----------
 static void AimLockSetQuat(uint64_t localPlayer, const Quaternion &q) {
     (void)localPlayer; (void)q;
-    // No-op — giữ API cho tương thích
 }
 static void AimLockSet(uint64_t localPlayer, uint64_t enemy, int posMode, float dist, const Vector3 &fromLoc) {
     (void)localPlayer; (void)enemy; (void)posMode; (void)dist; (void)fromLoc;
@@ -875,7 +919,6 @@ static void AimLockStop(void) {}
 
 // ============================================================
 // esp.mm — Part 5/8
-// Mono string + prefs sync + geometry buffers
 // ============================================================
 
 task_t g_target_task = 0;
@@ -885,7 +928,6 @@ uint64_t AllocateMonoString(task_t task, uint64_t originalStrPtr, NSString *nsSt
     uint64_t klass = ReadAddr<uint64_t>(originalStrPtr);
     if (!isVaildPtr(klass)) return 0;
     NSUInteger len = nsStr.length;
-    // Guard: nickname dài quá → tránh alloc lớn → tránh panic
     if (len == 0 || len > 64) return 0;
     mach_vm_address_t newAlloc = 0;
     mach_vm_size_t size = 0x14 + (len * 2) + 2;
@@ -935,7 +977,6 @@ static inline bool IsZeroVec(const Vector3 &v) {
     return v.x == 0.0f && v.y == 0.0f && v.z == 0.0f;
 }
 
-// ---------- Motion track ----------
 struct AimMotionTrack {
     uint64_t pawn = 0;
     Vector3 lastHip = {0, 0, 0};
@@ -1183,7 +1224,6 @@ static inline Vector3 AimLookAtHeadLive(uint64_t localPawn, uint64_t targetPawn,
 
 // ============================================================
 // esp.mm — Part 6/8
-// ESP_View interface + init + layers + dealloc
 // ============================================================
 
 @interface HTHESPSecureWrapper : UITextField
@@ -1279,7 +1319,6 @@ static void ESPViewAddImageCallback(void *context, UIImage *image, CGRect frame)
 static void *gEngine = (void *)1;
 mach_port_t task;
 
-// ---------- AN TOÀN: heartbeat log ----------
 #define DIAG_EARLY(reason) do { \
     static CFTimeInterval s_lastDiagE = 0; \
     CFTimeInterval nowE = CACurrentMediaTime(); \
@@ -1374,7 +1413,6 @@ static void ESPDiagHeartbeat(void) {
     return self;
 }
 
-// ---------- FIX TẮT NGUỒN: dealloc dừng hết thread + release port ----------
 - (void)dealloc {
     if (self.frameTimer) {
         dispatch_source_cancel(self.frameTimer);
@@ -1384,10 +1422,8 @@ static void ESPDiagHeartbeat(void) {
         [self.displayLink invalidate];
         self.displayLink = nil;
     }
-    // Dừng thread silent — tránh truy cập mutex sau khi destroy
     SilentAimStop();
     AimLockStop();
-    // Release port game nếu còn giữ
     if (g_target_task != 0) {
         mach_port_deallocate(mach_task_self(), g_target_task);
         g_target_task = 0;
@@ -1535,10 +1571,8 @@ static void ESPDiagHeartbeat(void) {
     if (layer.contents != (__bridge id)cgImg) layer.contents = (__bridge id)cgImg;
     if (!CGRectEqualToRect(layer.frame, frame)) layer.frame = frame;
 }
-
 // ============================================================
 // esp.mm — Part 7/8
-// updateFrame — KHÔNG còn BRUTAL PATCH scan 2GB
 // ============================================================
 
 static inline uint64_t ESPPhaseNowUS(void) {
@@ -1661,14 +1695,12 @@ static inline uint64_t ESPPhaseNowUS(void) {
                         Moudule_Base = (uint64_t)base;
                         s_attachedPid = ds_pid();
                         gEngine = (void *)1;
-                        // Release port cũ khi PID đổi
                         if (g_target_task != 0) {
                             mach_port_deallocate(mach_task_self(), g_target_task);
                             g_target_task = 0;
                         }
                         NSLog(@"[ESP] Attached to game PID=%d, Moudule_Base=0x%llx", ds_pid(), (unsigned long long)Moudule_Base);
                     } else {
-                        // KHÔNG reset Moudule_Base về 0 — chỉ chờ thêm
                         s_attachedPid = -1;
                         s_reattachCooldown = 5;
                     }
@@ -1712,14 +1744,6 @@ static inline uint64_t ESPPhaseNowUS(void) {
         MenuViewApplyPath(self.hpFillOrangeLayer, showVisuals ? buffers.hpFillOrangePath : nil, buffers.hpFillOrangeDirty);
         MenuViewApplyPath(self.hpFillRedLayer, showVisuals ? buffers.hpFillRedPath : nil, buffers.hpFillRedDirty);
         MenuViewApplyPath(self.alertLayer, showVisuals ? buffers.alertPath : nil, buffers.alertDirty);
-
-        // ============================================================
-        // BRUTAL PATCH — ĐÃ BỎ HOÀN TOÀN.
-        // Lý do: scan 2GB + malloc size lớn + detach thread + port leak
-        // => nguyên nhân chính gây tắt nguồn / panic.
-        // Nếu cần speed, dùng ToggleSpeedX50Safe() bên dưới.
-        // ============================================================
-
         static int s_dirtyBox = 0, s_dirtyBone = 0, s_dirtySnap = 0, s_dirtyHpG = 0;
         s_dirtyBox = buffers.boxDirty;
         s_dirtyBone = buffers.boneDirty;
@@ -1812,8 +1836,7 @@ static inline uint64_t ESPPhaseNowUS(void) {
 }
 
 // ============================================================
-// ToggleSpeedX50 SAFE — thay thế bản cũ scan 1.5GB
-// Chunk 4MB, check malloc NULL, check mach_vm_write return
+// ToggleSpeedX50Safe — CHỈ ĐỊNH NGHĨA 1 LẦN DUY NHẤT Ở ĐÂY
 // ============================================================
 extern "C" void ToggleSpeedX50Safe(bool enable) {
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
@@ -1827,7 +1850,7 @@ extern "C" void ToggleSpeedX50Safe(bool enable) {
         }
         uint64_t originalVal = 4397530849764387586ULL;
         uint64_t hackedVal   = 4397530849740000000ULL;
-        const mach_vm_size_t kChunkMax = 4 * 1024 * 1024; // 4MB
+        const mach_vm_size_t kChunkMax = 4 * 1024 * 1024;
         if (enable) {
             g_patchedAddresses.clear();
             mach_vm_address_t address = 0x100000000;
@@ -1883,8 +1906,7 @@ extern "C" void ToggleSpeedX50Safe(bool enable) {
 }
 
 // ============================================================
-// esp.mm — Part 8/8 (FULL)
-// renderESPWithBuffers + aim + getters + prefs + end of file
+// esp.mm — Part 8/8
 // ============================================================
 
 - (ESPFrameStats)renderESPWithBuffers:(ESPGeometryBuffers *)buffers
@@ -2061,7 +2083,6 @@ extern "C" void ToggleSpeedX50Safe(bool enable) {
     const bool haveLocalPos = looksLikeWorldPos(myLocation);
     const bool useLocalDistance = haveLocalPos;
 
-    // ===== Dict walk =====
     uint64_t playerDict = 0;
     const uint64_t dictOffs[] = {
         (uint64_t)kMatchPlayerDict,
@@ -2742,7 +2763,6 @@ extern "C" void ToggleSpeedX50Safe(bool enable) {
             if (!s.canAim || s.dis > aimDistance) continue;
             uint64_t PawnObject = s.pawn;
             Vector3 aimPos = s.aimPos;
-            Vector3 headBonePos = s.head;
             float dis = s.dis;
             int CurHP = s.curHP;
             bool isBot = s.isBot;
@@ -3380,7 +3400,7 @@ extern "C" void ToggleSpeedX50Safe(bool enable) {
 }
 
 // ============================================================
-// Getters / setters / prefs
+// Getters
 // ============================================================
 
 Quaternion GetRotationToLocation(Vector3 targetLocation, float y_bias, Vector3 myLoc) {
@@ -3455,13 +3475,12 @@ bool get_IsFPPVisible(uint64_t player) {
 }
 
 // ============================================================
-// write_aim_rotations — ĐÃ RÚT GỌN, chỉ ghi 2 offset cần thiết
+// write_aim_rotations — 4 offset
 // ============================================================
 static void write_aim_rotations(uint64_t player, const Quaternion &out) {
     if (!isVaildPtr(player)) return;
     WriteAddr<Quaternion>(player + kAimRotation, out);
     WriteAddr<Quaternion>(player + kCurrentAimRotation, out);
-    // Chỉ ghi thêm 2 offset fallback nếu offset chính khác
     if (kAimRotation != 0x5B4) {
         WriteAddr<Quaternion>(player + 0x5B4, out);
     }
@@ -3828,76 +3847,6 @@ void EnableCamPC(uint64_t localPlayerPawn, bool isEnabled, float campcValue) {
     } else {
         s_lastFollowCameraObj = 0;
     }
-}
-
-// ============================================================
-// ToggleSpeedX50Safe — bản an toàn thay thế ToggleSpeedX50 cũ
-// ============================================================
-extern "C" void ToggleSpeedX50Safe(bool enable) {
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
-        std::lock_guard<std::mutex> lk(g_patchedMtx);
-        pid_t pid = (pid_t)GameTargetProcessPid();
-        if (pid <= 0) return;
-        task_t tk = 0;
-        if (task_for_pid(mach_task_self(), pid, &tk) != KERN_SUCCESS) {
-            NSLog(@"[HTH Cheat] LỖI: Không lấy được task_for_pid!");
-            return;
-        }
-        uint64_t originalVal = 4397530849764387586ULL;
-        uint64_t hackedVal   = 4397530849740000000ULL;
-        const mach_vm_size_t kChunkMax = 4 * 1024 * 1024;
-        if (enable) {
-            g_patchedAddresses.clear();
-            mach_vm_address_t address = 0x100000000;
-            mach_vm_size_t size = 0;
-            vm_region_basic_info_data_64_t info;
-            mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
-            mach_port_t object_name;
-            while (mach_vm_region(tk, &address, &size, VM_REGION_BASIC_INFO_64,
-                                  (vm_region_info_t)&info, &count, &object_name) == KERN_SUCCESS) {
-                if (address > 0x160000000) break;
-                if ((info.protection & VM_PROT_READ) && (info.protection & VM_PROT_WRITE)) {
-                    mach_vm_address_t chunkAddr = address;
-                    mach_vm_size_t remain = size;
-                    while (remain > 0) {
-                        mach_vm_size_t chunk = remain > kChunkMax ? kChunkMax : remain;
-                        uint8_t *buffer = (uint8_t *)malloc(chunk);
-                        if (!buffer) { chunkAddr += chunk; remain -= chunk; continue; }
-                        mach_vm_size_t bytesRead = 0;
-                        kern_return_t rk = mach_vm_read_overwrite(tk, chunkAddr, chunk,
-                                                                  (mach_vm_address_t)buffer, &bytesRead);
-                        if (rk == KERN_SUCCESS) {
-                            for (size_t i = 0; i + 8 <= bytesRead; i += 4) {
-                                uint64_t currentValue = *(uint64_t *)(buffer + i);
-                                if (currentValue == originalVal) {
-                                    mach_vm_address_t exactWriteAddress = chunkAddr + i;
-                                    kern_return_t wk = mach_vm_write(tk, exactWriteAddress,
-                                                                     (vm_offset_t)&hackedVal, sizeof(hackedVal));
-                                    if (wk == KERN_SUCCESS) {
-                                        g_patchedAddresses.push_back(exactWriteAddress);
-                                    }
-                                }
-                            }
-                        }
-                        free(buffer);
-                        chunkAddr += chunk;
-                        remain -= chunk;
-                    }
-                }
-                address += size;
-            }
-        } else {
-            if (!g_patchedAddresses.empty()) {
-                for (mach_vm_address_t savedAddr : g_patchedAddresses) {
-                    kern_return_t wk = mach_vm_write(tk, savedAddr,
-                                                     (vm_offset_t)&originalVal, sizeof(originalVal));
-                    (void)wk;
-                }
-                g_patchedAddresses.clear();
-            }
-        }
-        mach_port_deallocate(mach_task_self(), tk);
-    });
 }
 
 // ============================================================
