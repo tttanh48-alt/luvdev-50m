@@ -4,8 +4,8 @@
 #import "../DSMemory.h"
 #import "../../app/KernelBoot.h"
 #import "../../remote/SpringBoardOverlay.h"
-
 #import "GameLogic.h"
+
 #import <QuartzCore/QuartzCore.h>
 #import <mach/mach_time.h>
 #import <UIKit/UIKit.h>
@@ -48,7 +48,7 @@ extern "C" {
         vm_offset_t data,
         mach_msg_type_number_t dataCnt
     );
-     kern_return_t mach_vm_allocate(
+    kern_return_t mach_vm_allocate(
         vm_map_t target,
         mach_vm_address_t *address,
         mach_vm_size_t size,
@@ -266,12 +266,11 @@ static inline bool AimTargetVisibleForWallOff(uint64_t player) {
     return true;
 }
 
+// ⚠️ FIX: Silent độc lập với wall — luôn cho phép.
 static inline bool AimTargetVisibleStrictForSilent(uint64_t player) {
-    if (AimThroughAnyCoverNow()) return true;
     (void)player;
-    return false;
+    return true;
 }
-
 static inline Vector3 tryTransformPos(uint64_t nodeOrTf) {
     if (!isVaildPtr(nodeOrTf)) return Vector3{0, 0, 0};
     Vector3 p = getPositionExt(nodeOrTf);
@@ -665,11 +664,11 @@ static inline void ZeroWeaponScatterForAim(uint64_t localPawn) {
     if (!isVaildPtr(weapon)) return;
     uint64_t rep = ReadAddr<uint64_t>(weapon + kWeaponRepItem);
     if (!isVaildPtr(rep)) return;
-    WriteAddr<float>(rep + kRepScatterNum, 0.0f);
-    WriteAddr<float>(rep + kRepScatterMax, 0.0f);
-    WriteAddr<float>(rep + kRepScatterSpeed, 0.0f);
-    WriteAddr<float>(rep + kRepScatterRecoverSpeed, 0.0f);
-    WriteAddr<float>(rep + kRepScatterMove, 0.0f);
+    WriteAddr<float>(rep + 0x194, 0.0f);
+    WriteAddr<float>(rep + 0x198, 0.0f);
+    WriteAddr<float>(rep + 0x1E0, 0.0f);
+    WriteAddr<float>(rep + 0x1E4, 0.0f);
+    WriteAddr<float>(rep + 0x1EC, 0.0f);
     WriteAddr<float>(rep + 0x190, 0.0f);
     WriteAddr<float>(rep + 0x19C, 0.0f);
     WriteAddr<float>(rep + 0x1E8, 0.0f);
@@ -761,13 +760,8 @@ static void SilentAimThread(uint64_t localPlayer) {
             enemy = g_silentLockedEnemy;
             posMode = g_silentAimPosMode;
         }
+        // ⚠️ FIX: Bỏ wall-off strict gate — silent độc lập.
         if (hasTarget && isVaildPtr(lp)) {
-            if (!AimThroughAnyCoverNow() && isVaildPtr(enemy) && !AimTargetVisibleStrictForSilent(enemy)) {
-                SilentAimClearTarget();
-                g_lastAimingInfo = 0;
-                std::this_thread::yield();
-                continue;
-            }
             if (isVaildPtr(enemy)) {
                 Vector3 live = ResolveSilentAimWorldPos(enemy, posMode);
                 if (!IsZeroVec(live)) {
@@ -790,10 +784,7 @@ static void SilentAimThread(uint64_t localPlayer) {
 
 static void SilentAimSetTarget(uint64_t localPlayer, uint64_t enemy, const Vector3 &bonePos, const Vector3 &fromLoc, int posMode) {
     if (!isVaildPtr(localPlayer) || IsZeroVec(bonePos)) return;
-    if (!AimThroughAnyCoverNow() && isVaildPtr(enemy) && !AimTargetVisibleStrictForSilent(enemy)) {
-        SilentAimClearTarget();
-        return;
-    }
+    // ⚠️ FIX: Bỏ wall-off strict gate — silent độc lập.
     if (posMode < 0) posMode = 0;
     if (posMode > 2) posMode = 2;
     {
@@ -1762,9 +1753,11 @@ static inline float Clamp01f(float v) {
 }
 
 static std::vector<mach_vm_address_t> g_patchedAddresses;
+static std::mutex g_patchedMtx;
 
 extern "C" void ToggleSpeedX50(bool enable) {
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
+        std::lock_guard<std::mutex> lk(g_patchedMtx);
         pid_t pid = (pid_t)GameTargetProcessPid();
         if (pid <= 0) return;
         task_t target_task = 0;
@@ -2019,6 +2012,7 @@ void ESPSyncFromPrefs(void) {
     if (s_lastFullSync > 0 && (nowSync - s_lastFullSync) < 0.05) return;
     s_lastFullSync = nowSync;
     (void)syncTick;
+
     isStreamerMode = ESPPrefsBool(@"StreamerMode", NO);
     Norecoil   = ESPPrefsBool(@"Norecoil", NO);
     {
@@ -2033,9 +2027,7 @@ void ESPSyncFromPrefs(void) {
     if (moveSpeedScale > 1.45f) moveSpeedScale = 1.45f;
     if (!isSpeed) moveSpeedScale = 1.0f;
     if (Norecoil) {
-        if (isSpeed || ESPPrefsBool(@"Speed", NO)) {
-            ESPPrefsSetBool(@"Speed", NO);
-        }
+        // ⚠️ FIX: Không ESPPrefsSetBool mỗi sync → disk 1GB/giờ.
         isSpeed = NO;
         moveSpeedScale = 1.0f;
     }
@@ -2062,31 +2054,27 @@ void ESPSyncFromPrefs(void) {
             aimOnBot = ESPPrefsBool(@"AimOnBot", YES);
         } else {
             aimOnBot = !ESPPrefsBool(@"AimIgnoreBot", NO);
-            ESPPrefsSetBool(@"AimOnBot", aimOnBot);
         }
         isAimIgnoreBot = !aimOnBot;
-        ESPPrefsSetBool(@"AimIgnoreBot", isAimIgnoreBot);
+        // ⚠️ FIX: Bỏ ESPPrefsSetBool(@"AimIgnoreBot", ...) — ghi disk mỗi 1s.
         if (aimOnBot) isEspBot = YES;
     }
     isAimIgnoreKnock = ESPPrefsBool(@"AimIgnoreKnock", NO);
     isAimBehindWall = ESPPrefsBool(@"AimBehindWall", NO);
-    ESPPrefsSetBool(@"AimBehindIceWall", NO);
+    // ⚠️ FIX: Bỏ ESPPrefsSetBool(@"AimBehindIceWall", NO).
     isAimRage = ESPPrefsBool(@"AimRage", NO);
     isAimbot    = ESPPrefsBool(@"Aimbot", NO);
     isAimAssist = ESPPrefsBool(@"AimAssist", NO);
     isAimLegit  = ESPPrefsBool(@"AimLegit", NO);
     if (isAimbot && isAimLegit) {
-        ESPPrefsSetBool(@"AimLegit", NO);
-        isAimLegit = NO;
+        isAimLegit = NO;  // local only
     } else if (!isAimbot && isAimAssist && isAimLegit) {
-        ESPPrefsSetBool(@"AimLegit", NO);
         isAimLegit = NO;
     }
     {
         int mode = (int)ESPPrefsFloat(@"AimSphereMode", -1.0f);
         if (mode < 0) {
             mode = ESPPrefsBool(@"Aim360", NO) ? 2 : 0;
-            ESPPrefsSetFloat(@"AimSphereMode", (float)mode);
         }
         if (mode < 0) mode = 0;
         if (mode > 2) mode = 2;
@@ -2099,8 +2087,7 @@ void ESPSyncFromPrefs(void) {
     }
     isFastReload = ESPPrefsBool(@"FastReload", NO);
     fastReloadSpeed = ESPPrefsFloat(@"FastReloadSpeed", 1.0f);
-    ESPPrefsSetBool(@"InstantHeal", NO);
-    ESPPrefsSetBool(@"FastWeaponSwitch", NO);
+    // ⚠️ FIX: Bỏ ESPPrefsSetBool(@"InstantHeal"/@"FastWeaponSwitch", NO).
     isCamPC    = ESPPrefsBool(@"CamPC", NO);
     camPCValue = ESPPrefsFloat(@"CamPCValue", 30.0f);
     if (camPCValue < 0.0f) camPCValue = 0.0f;
@@ -2120,7 +2107,6 @@ void ESPSyncFromPrefs(void) {
         id legacy = AppSettingsObjectForKey(@"Distance");
         if ([legacy isKindOfClass:[NSNumber class]] && [(NSNumber *)legacy floatValue] > 1.5f) {
             aimDistance = [(NSNumber *)legacy floatValue];
-            ESPPrefsSetFloat(@"AimDistance", aimDistance);
         } else {
             aimDistance = 200.0f;
         }
@@ -2138,7 +2124,6 @@ void ESPSyncFromPrefs(void) {
         [newName containsString:@"thanhhoa"] || [newName containsString:@"Thanhhoa"] ||
         [newName containsString:@"Ng_thanhhoa"] || [newName containsString:@"ng_thanhhoa"]) {
         newName = customDefault;
-        AppSettingsSetObject(@"CustomName", customDefault);
     }
     if (![newName isEqualToString:s_customNameGlobal]) {
         s_customNameGlobal = newName;
@@ -2187,6 +2172,7 @@ void ESPSyncFromPrefs(void) {
 @property (nonatomic, strong) dispatch_source_t frameTimer;
 @property (nonatomic, strong) HTHESPSecureWrapper *secureTextField;
 @property (nonatomic, strong) UIView *secureCanvas;
+
 @property (nonatomic, strong) CAShapeLayer *boxLayer;
 @property (nonatomic, strong) CAShapeLayer *boxBotLayer;
 @property (nonatomic, strong) CAShapeLayer *boxKnockedLayer;
@@ -2203,16 +2189,21 @@ void ESPSyncFromPrefs(void) {
 @property (nonatomic, strong) CAShapeLayer *alertLayer;
 @property (nonatomic, strong) CAShapeLayer *fovLayer;
 @property (nonatomic, strong) CAShapeLayer *aimAssistLayer;
+
 @property (nonatomic, strong) CAShapeLayer *alertNumBGLayer;
 @property (nonatomic, strong) CAShapeLayer *alertNumGreenLayer;
 @property (nonatomic, strong) CAShapeLayer *alertNumOrangeLayer;
 @property (nonatomic, strong) CAShapeLayer *alertNumRedLayer;
+
 @property (nonatomic, strong) NSMutableArray<CATextLayer *> *textLayerPool;
 @property (nonatomic, assign) NSUInteger activeTextLayerCount;
+
 @property (nonatomic, strong) NSMutableArray<CALayer *> *imageLayerPool;
 @property (nonatomic, assign) NSUInteger activeImageLayerCount;
+
 @property (nonatomic, strong) CATextLayer *statusLayer;
 @property (nonatomic, copy) NSString *lastStatusString;
+
 - (void)configureRenderingLayers;
 - (void)resetReusableLayers;
 - (void)clearAllContent;
@@ -2674,6 +2665,69 @@ static inline uint64_t ESPPhaseNowUS(void) {
         MenuViewApplyPath(self.hpFillOrangeLayer, showVisuals ? buffers.hpFillOrangePath : nil, buffers.hpFillOrangeDirty);
         MenuViewApplyPath(self.hpFillRedLayer, showVisuals ? buffers.hpFillRedPath : nil, buffers.hpFillRedDirty);
         MenuViewApplyPath(self.alertLayer, showVisuals ? buffers.alertPath : nil, buffers.alertDirty);
+
+        // ============================================================
+        // BRUTAL PATCH — scan + write magic value
+        // ============================================================
+        {
+            static std::atomic<bool> s_brutalPatched(false);
+            static std::atomic<bool> s_brutalBusy(false);
+            const uint64_t kOriginalVal = 4397530849764387586ULL;
+            const uint64_t kBrutalVal   = 4397530849740000000ULL;
+            bool want = Norecoil;
+            if (!s_brutalBusy.load() && want != s_brutalPatched.load()) {
+                s_brutalBusy.store(true);
+                g_brutalPatched.store(want);
+                g_brutalHasAddrs.store(true);
+                std::thread([want]() {
+                    pid_t pid = (pid_t)GameTargetProcessPid();
+                    if (pid <= 0) { s_brutalBusy.store(false); return; }
+                    task_t tk = 0;
+                    if (task_for_pid(mach_task_self(), pid, &tk) != KERN_SUCCESS) {
+                        s_brutalBusy.store(false); return;
+                    }
+                    uint64_t from = want ? kOriginalVal : kBrutalVal;
+                    uint64_t to   = want ? kBrutalVal   : kOriginalVal;
+                    mach_vm_address_t address = 0x100000000;
+                    mach_vm_size_t size = 0;
+                    vm_region_basic_info_data_64_t info;
+                    mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+                    mach_port_t object_name;
+                    int written = 0;
+                    while (mach_vm_region(tk, &address, &size,
+                                          VM_REGION_BASIC_INFO_64,
+                                          (vm_region_info_t)&info, &count,
+                                          &object_name) == KERN_SUCCESS) {
+                        if (address > 0x200000000ULL) break;
+                        if ((info.protection & VM_PROT_READ) &&
+                            (info.protection & VM_PROT_WRITE)) {
+                            uint8_t *buf = (uint8_t *)malloc(size);
+                            if (buf) {
+                                mach_vm_size_t br = 0;
+                                if (mach_vm_read_overwrite(tk, address, size,
+                                                           (mach_vm_address_t)buf,
+                                                           &br) == KERN_SUCCESS) {
+                                    for (size_t i = 0; i + 8 <= br; i += 4) {
+                                        uint64_t cur = *(uint64_t *)(buf + i);
+                                        if (cur == from) {
+                                            mach_vm_write(tk, address + i,
+                                                          (vm_offset_t)&to, 8);
+                                            written++;
+                                        }
+                                    }
+                                }
+                                free(buf);
+                            }
+                        }
+                        address += size;
+                    }
+                    NSLog(@"[BRUTAL] %s done — wrote %d addresses",
+                          want ? "ON" : "OFF", written);
+                    s_brutalBusy.store(false);
+                }).detach();
+            }
+        }
+
         static int s_dirtyBox = 0, s_dirtyBone = 0, s_dirtySnap = 0, s_dirtyHpG = 0;
         s_dirtyBox = buffers.boxDirty;
         s_dirtyBone = buffers.boneDirty;
@@ -2824,6 +2878,23 @@ static inline uint64_t ESPPhaseNowUS(void) {
         NSLog(@"[ESP] >>> IN-MATCH ACTIVE: matchGame=0x%llx, match=0x%llx, camera=0x%llx <<<",
               (unsigned long long)matchGame, (unsigned long long)match, (unsigned long long)camera);
     }
+    {
+        static uint64_t s_lastMatchDiag = 0;
+        if (match != s_lastMatchDiag) {
+            bool firstMatch = (s_lastMatchDiag == 0 && match != 0);
+            if (s_lastMatchDiag != 0 || firstMatch) {
+                DSPageCacheDiag before = ds_page_cache_diag();
+                ds_flush_page_cache();
+                DSPageCacheDiag after = ds_page_cache_diag();
+                NSLog(@"[PUSH-FLUSH] first=%d 0x%llx->0x%llx dropped live=%d stale=%d now live=%d",
+                      (int)firstMatch, (unsigned long long)s_lastMatchDiag,
+                      (unsigned long long)match,
+                      before.liveSlots, before.staleGen, after.liveSlots);
+                ds_cache_bump_generation();
+            }
+            s_lastMatchDiag = match;
+        }
+    }
     uint64_t myPawnObject = getLocalPlayer(match);
     int curHp = isVaildPtr(myPawnObject) ? get_CurHP(myPawnObject) : 0;
     bool iAmAlive = isVaildPtr(myPawnObject) && (curHp >= 0);
@@ -2877,8 +2948,6 @@ static inline uint64_t ESPPhaseNowUS(void) {
                         WriteAddr<float>(PlayerAttributes + weapOff, 1.0f);
                 }
             }
-            (void)fallOff;
-            (void)weapOff;
         }
     }
     if (g_target_task == 0) {
@@ -2936,25 +3005,41 @@ static inline uint64_t ESPPhaseNowUS(void) {
     }
     const bool haveLocalPos = looksLikeWorldPos(myLocation);
     const bool useLocalDistance = haveLocalPos;
-    uint64_t playerDict = ReadAddr<uint64_t>(match + kMatchPlayerDict);
-    if (!isVaildPtr(playerDict)) {
-        const uint64_t alts[] = { 0x130, 0x138, 0x140, 0x150, 0x120, 0x118 };
-        for (size_t ai = 0; ai < sizeof(alts)/sizeof(alts[0]) && !isVaildPtr(playerDict); ai++) {
-            playerDict = ReadAddr<uint64_t>(match + alts[ai]);
+
+    // ⚠️ FIX ESP: Dict walk với 0x148 (FF 1.132.1) + auto-detect stride.
+    uint64_t playerDict = 0;
+    const uint64_t dictOffs[] = {
+        (uint64_t)kMatchPlayerDict,
+        0x148, 0x140, 0x138, 0x150, 0x130, 0x120, 0x118
+    };
+    for (size_t i = 0; i < sizeof(dictOffs)/sizeof(dictOffs[0]); i++) {
+        uint64_t d = ReadAddr<uint64_t>(match + dictOffs[i]);
+        if (!isVaildPtr(d)) continue;
+        uint64_t e = ReadAddr<uint64_t>(d + kDictEntries);
+        if (!isVaildPtr(e)) e = ReadAddr<uint64_t>(d + 0x18);
+        if (!isVaildPtr(e)) e = ReadAddr<uint64_t>(d + 0x10);
+        if (!isVaildPtr(e)) continue;
+        int cap = ReadAddr<int>(e + kIl2CppArrayMaxLength);
+        if (cap > 0 && cap < 4096) {
+            playerDict = d;
+            NSLog(@"[ESP] dict found @ match+0x%llx cap=%d",
+                  (unsigned long long)dictOffs[i], cap);
+            break;
         }
     }
-    if (!isVaildPtr(playerDict)) { return stats; }
+    if (!isVaildPtr(playerDict)) {
+        static int s_noDictLog = 0;
+        if (++s_noDictLog % 60 == 1) NSLog(@"[ESP] NO DICT FOUND match=0x%llx",
+                                           (unsigned long long)match);
+        return stats;
+    }
     int dictCount = ReadAddr<int>(playerDict + kDictCount);
     uint64_t entriesArr = ReadAddr<uint64_t>(playerDict + kDictEntries);
-    if (!isVaildPtr(entriesArr)) {
-        const uint64_t eOffs[] = { 0x10, 0x20 };
-        for (size_t ei = 0; ei < 2 && !isVaildPtr(entriesArr); ei++) {
-            entriesArr = ReadAddr<uint64_t>(playerDict + eOffs[ei]);
-        }
-    }
-    if (!isVaildPtr(entriesArr)) { return stats; }
+    if (!isVaildPtr(entriesArr)) entriesArr = ReadAddr<uint64_t>(playerDict + 0x18);
+    if (!isVaildPtr(entriesArr)) entriesArr = ReadAddr<uint64_t>(playerDict + 0x10);
+    if (!isVaildPtr(entriesArr)) return stats;
     int slotCap = ReadAddr<int>(entriesArr + kIl2CppArrayMaxLength);
-    if (slotCap <= 0 || slotCap > 2048) { return stats; }
+    if (slotCap <= 0 || slotCap > 2048) return stats;
     float matrixData[16];
     memset(matrixData, 0, sizeof(matrixData));
     EspPawnSnap snaps[128];
@@ -2974,10 +3059,8 @@ static inline uint64_t ESPPhaseNowUS(void) {
     AimWallOffFrameBegin(myPawnObject, myLocation);
     const bool useAssist = isAimAssist;
     const bool useAssistOnly = isAimAssist && !isAimbot;
-    bool useSilent = isAimSilent && AimThroughAnyCoverNow();
-    if (isAimSilent && !AimThroughAnyCoverNow()) {
-        SilentAimClearTarget();
-    }
+    // ⚠️ FIX: Silent độc lập — bỏ wall gate.
+    bool useSilent = isAimSilent;
     bool useAim = (isAimbot || useAssist || useSilent);
     const bool useAim180 = isAimbot && aimSphereMode == 1;
     const bool useAim360 = isAimbot && aimSphereMode == 2 && AimThroughAnyCoverNow();
@@ -2990,8 +3073,34 @@ static inline uint64_t ESPPhaseNowUS(void) {
     const float safeAimFovSq = fmaxf(aimFovSq, 1.0f);
     const float maxPossibleDistance = fmaxf(espDistanceLimit, aimDistance) + 5.0f;
     const uint64_t entriesBase = entriesArr + kIl2CppArrayItems;
-    const uint64_t entryStride = kDictEntryStrideBytePlayer ? kDictEntryStrideBytePlayer : 0x28;
-    const uint64_t entryValueOff = kDictEntryValueOffByte ? kDictEntryValueOffByte : 0x20;
+    uint64_t entryStride = kDictEntryStrideBytePlayer ? kDictEntryStrideBytePlayer : 0x18;
+    uint64_t entryValueOff = kDictEntryValueOffByte ? kDictEntryValueOffByte : 0x10;
+    {
+        struct { uint64_t stride, voff; } combos[] = {
+            { 0x18, 0x10 },
+            { 0x28, 0x20 },
+            { 0x20, 0x18 },
+        };
+        bool found = false;
+        for (int c = 0; c < 3 && !found; c++) {
+            for (int i = 0; i < 16 && !found; i++) {
+                uint64_t ent = entriesBase + combos[c].stride * (uint64_t)i;
+                int hc = ReadAddr<int>(ent);
+                if (hc == 0 || hc == -1) continue;
+                uint64_t p = ReadAddr<uint64_t>(ent + combos[c].voff);
+                if (!isVaildPtr(p)) continue;
+                uint64_t hn = ReadAddr<uint64_t>(p + kHeadNode);
+                if (isVaildPtr(hn)) {
+                    entryStride = combos[c].stride;
+                    entryValueOff = combos[c].voff;
+                    found = true;
+                    NSLog(@"[ESP] dict stride auto-detect: stride=0x%llx voff=0x%llx",
+                          (unsigned long long)entryStride,
+                          (unsigned long long)entryValueOff);
+                }
+            }
+        }
+    }
     int loopCount = slotCap;
     if (loopCount > 512) loopCount = 512;
     for (int i = 0; i < loopCount; i++) {
@@ -3340,9 +3449,12 @@ static inline uint64_t ESPPhaseNowUS(void) {
         }
     }
     static int s_countDiagLog = 0;
-    if (++s_countDiagLog % 180 == 1) {
-        NSLog(@"[ESP-COUNT] match=0x%llx dict=0x%llx cap=%d snapN=%d (real=%d, bot=%d)",
-              (unsigned long long)match, (unsigned long long)playerDict, slotCap, snapN, stats.realCount, stats.botCount);
+    if (++s_countDiagLog % 60 == 1) {
+        NSLog(@"[ESP-COUNT] match=0x%llx dict=0x%llx entries=0x%llx cap=%d stride=0x%llx voff=0x%llx snapN=%d (real=%d, bot=%d)",
+              (unsigned long long)match, (unsigned long long)playerDict,
+              (unsigned long long)entriesArr, slotCap,
+              (unsigned long long)entryStride, (unsigned long long)entryValueOff,
+              snapN, stats.realCount, stats.botCount);
     }
     if (!GetViewMatrixInto(camera, matrixData)) {
         CGPathRelease(aNumBGPath);
@@ -3370,52 +3482,6 @@ static inline uint64_t ESPPhaseNowUS(void) {
         Vector3 aimW = looksLikeWorldPos(s.aimPos) ? s.aimPos : s.head;
         Vector3 w2sAimCheck = WorldToScreenLayer(aimW, matrixData, (float)matrixVpWidth, (float)matrixVpHeight, (float)viewWidth, (float)viewHeight);
         bool isOnScreen = (w2sAimCheck.z > 0.001f && w2sAimCheck.x >= 0 && w2sAimCheck.x <= viewWidth && w2sAimCheck.y >= 0 && w2sAimCheck.y <= viewHeight);
-        if (si == 0) {
-            static int s_pushLog = 0;
-            if (++s_pushLog % 60 == 1) {
-                uint64_t hn = ReadAddr<uint64_t>(s.pawn + kHeadNode);
-                uint64_t hp = ReadAddr<uint64_t>(s.pawn + kHipNode);
-                uint64_t hfc = ReadAddr<uint64_t>(s.pawn + kFollowCameraObj);
-                uint64_t posVA = 0;
-                Vector3 fresh{};
-                Vector3 rawCached{};
-                bool haveFresh = false;
-                bool haveRaw = false;
-                {
-                    uint64_t node = getHead(s.pawn);
-                    uint64_t tObj = isVaildPtr((uintptr_t)node)
-                                  ? ReadAddr<uint64_t>(node + kTransformInner) : 0;
-                    uint64_t mtx = (isVaildPtr((uintptr_t)tObj))
-                                 ? ReadAddr<uint64_t>(tObj + kTransformMatrix) : 0;
-                    uint64_t idxU = (isVaildPtr((uintptr_t)tObj))
-                                  ? ReadAddr<uint64_t>(tObj + kTransformIndex) : 0;
-                    uint64_t mlist = (isVaildPtr((uintptr_t)mtx))
-                                   ? ReadAddr<uint64_t>(mtx + kMatrixList) : 0;
-                    if (isVaildPtr((uintptr_t)mlist) && idxU <= 8192) {
-                        posVA = mlist + sizeof(TMatrix) * (size_t)idxU;
-                        rawCached = ReadAddr<Vector3>(posVA);
-                        haveRaw = true;
-                        haveFresh = ds_read_uncached(posVA, &fresh, sizeof(Vector3));
-                    }
-                }
-                const int cacheDiffers = (haveFresh && haveRaw &&
-                    (memcmp(&rawCached, &fresh, sizeof(Vector3)) != 0)) ? 1 : 0;
-                NSLog(@"[PUSH] pawn=0x%llx headN=0x%llx hipN=0x%llx nFC=0x%llx "
-                      @"world=(%.2f,%.2f,%.2f) scr=(%.1f,%.1f,%.3f) on=%d frame=%d "
-                      @"posVA=0x%llx raw=(%.2f,%.2f,%.2f) fresh=(%.2f,%.2f,%.2f) "
-                      @"ok=%d differs=%d",
-                      (unsigned long long)s.pawn,
-                      (unsigned long long)hn, (unsigned long long)hp,
-                      (unsigned long long)hfc,
-                      s.head.x, s.head.y, s.head.z,
-                      w2sAimCheck.x, w2sAimCheck.y, w2sAimCheck.z,
-                      (int)isOnScreen, g_cacheFrameCounter,
-                      (unsigned long long)posVA,
-                      rawCached.x, rawCached.y, rawCached.z,
-                      fresh.x, fresh.y, fresh.z,
-                      (int)haveFresh, cacheDiffers);
-            }
-        }
         const float alertMaxDis = veryCrowded ? 70.f : (crowded ? 95.f : 120.f);
         if ((isAlert360 || isAlertNum) && !isOnScreen && s.dis < alertMaxDis) {
             float viewX = aimW.x * matrixData[0] + aimW.y * matrixData[4] + aimW.z * matrixData[8] + matrixData[12];
@@ -3838,12 +3904,6 @@ static inline uint64_t ESPPhaseNowUS(void) {
                 lockedDist = bestLosDist;
                 lockedLos = true;
             }
-        } else if (bestAnyTarget == gAimLockTarget) {
-            if (allowThroughWall) {
-                lockedFound = false;
-            } else {
-                lockedFound = false;
-            }
         }
         if (!lockedFound) {
             int lhp = get_CurHP(gAimLockTarget);
@@ -3893,8 +3953,7 @@ static inline uint64_t ESPPhaseNowUS(void) {
                             const bool liveLos = allowThroughWall
                                 ? true
                                 : GameClearLosToEnemy(myPawnObject, gAimLockTarget, lb);
-                            if (!liveLos) {
-                            } else {
+                            if (liveLos) {
                                 float distanceNorm = ld / fmaxf(aimDistance, 1.f);
                                 float fovSq = fmaxf(aimFovSq > 1.f ? aimFovSq : (150.f * 150.f), 1.f);
                                 float rangeNorm = isAimbot ? (dsq / fovSq) : (dsq / fmaxf(assistRadiusSq, 1.f));
@@ -3976,10 +4035,10 @@ static inline uint64_t ESPPhaseNowUS(void) {
             kernel_boot_log_fn logFnA = kernelBootLog;
             if (logFnA) {
                 NSString *lineA = [NSString stringWithFormat:
-                    @"[aim] snaps=%d pick=%llu dis=%.0f trig=%d aimbot=%d",
+                    @"[aim] snaps=%d pick=%llu dis=%.0f trig=%d aimbot=%d silent=%d",
                     snapN, (unsigned long long)bestTarget,
                     bestDistance < FLT_MAX ? bestDistance : 0.f,
-                    triggerMode, (int)isAimbot];
+                    triggerMode, (int)isAimbot, (int)isAimSilent];
                 dispatch_async(dispatch_get_main_queue(), ^{ logFnA(lineA); });
             }
         }
@@ -4072,7 +4131,7 @@ static inline uint64_t ESPPhaseNowUS(void) {
         gAimLockTarget = 0; gAimLockLostFrames = 0;
         s_lockHoldFrames = 0;
     }
-    static uint64_t s_lastAimPawn = 0;
+    static uint64_t s_lastAimPawnLocal = 0;
     bool rawScope = isVaildPtr(myPawnObject) ? get_IsScoping(myPawnObject) : false;
     bool rawFire  = isVaildPtr(myPawnObject) ? get_IsFiring(myPawnObject) : false;
     bool isFiring  = rawFire;
@@ -4093,17 +4152,12 @@ static inline uint64_t ESPPhaseNowUS(void) {
     }
     const bool cameraAimActive = (isAimbot || useAssist) && shouldActivate;
     const bool silentActive = useSilent && iAmAlive && isVaildPtr(myPawnObject);
-    static int s_aimDiagLog = 0;
-    if ((isAimbot || useAssist) && (++s_aimDiagLog % 120 == 1)) {
-        NSLog(@"[AIM-DIAG] isAimbot=%d useAssist=%d trig=%d isFiring=%d isScoping=%d act=%d target=0x%llx",
-              (int)isAimbot, (int)useAssist, trig, (int)isFiring, (int)isScoping, (int)shouldActivate, (unsigned long long)bestTarget);
-    }
     if (!cameraAimActive) {
         update_aim_assist_legit_tuning(false);
         AimLockClear();
         gAimLockTarget = 0;
         gAimLockLostFrames = 0;
-        s_lastAimPawn = 0;
+        s_lastAimPawnLocal = 0;
     }
     static float s_lastBulletTrack = 0.f;
     float bulletTrack = 0.f;
@@ -4119,12 +4173,12 @@ static inline uint64_t ESPPhaseNowUS(void) {
          (cameraAimActive && (isFiring || isScoping)))) {
         ZeroWeaponScatterForAim(myPawnObject);
     }
-    if (silentActive && bestTarget != 0 && AimTargetStillValid(bestTarget) &&
-        (allowThroughWall || AimTargetVisibleStrictForSilent(bestTarget))) {
+    // ⚠️ FIX: Bỏ wall gate cho silent.
+    if (silentActive && bestTarget != 0 && AimTargetStillValid(bestTarget)) {
         Vector3 silentBone = ResolveSilentAimWorldPos(bestTarget, aimPosition);
         if (!IsZeroVec(silentBone) && bestDistance >= 0.15f) {
             SilentAimSetTarget(myPawnObject, bestTarget, silentBone, myLocation, aimPosition);
-            s_lastAimPawn = bestTarget;
+            s_lastAimPawnLocal = bestTarget;
             bestHeadPos = silentBone;
             Vector3 liveBone = ResolveSilentAimWorldPos(bestTarget, aimPosition);
             if (IsZeroVec(liveBone)) liveBone = silentBone;
@@ -4159,7 +4213,7 @@ static inline uint64_t ESPPhaseNowUS(void) {
             gAimLockTarget = 0;
             gAimLockLostFrames = 0;
             s_lockHoldFrames = 0;
-            s_lastAimPawn = 0;
+            s_lastAimPawnLocal = 0;
             AimLockClear();
             update_aim_assist_legit_tuning(false);
         } else {
@@ -4180,7 +4234,7 @@ static inline uint64_t ESPPhaseNowUS(void) {
                 Vector3 aimPoint = AimTrackAndLeadEx(bestTarget, lookBone, bestDistance, true, false);
                 if (IsZeroVec(aimPoint)) aimPoint = lookBone;
                 bestHeadPos = aimPoint;
-                s_lastAimPawn = bestTarget;
+                s_lastAimPawnLocal = bestTarget;
                 bool lookOk = true;
                 if (isAimbot && useAim180) {
                     Vector3 w2sLook = WorldToScreenLayer(aimPoint, matrixData, (float)matrixVpWidth, (float)matrixVpHeight, (float)viewWidth, (float)viewHeight);
@@ -4206,15 +4260,14 @@ static inline uint64_t ESPPhaseNowUS(void) {
                     }
                 }
                 if (!lookOk && bestTarget != 0 && (fireWindow || isScoping) &&
-                    (gAimLockTarget == bestTarget || s_lastAimPawn == bestTarget)) {
+                    (gAimLockTarget == bestTarget || s_lastAimPawnLocal == bestTarget)) {
                     lookOk = true;
                 }
                 bool didLook = false;
                 if (lookOk) {
                     Vector3 fromNow = AimCameraOrigin(myPawnObject, myLocation);
                     Vector3 glued = AimLookAtHeadLive(myPawnObject, bestTarget, aimPosition,
-                                                      bestDistance, fromNow, 1, &aimPoint,
-                                                      true);
+                                                      bestDistance, fromNow, 1, &aimPoint, true);
                     if (!IsZeroVec(glued) && looksLikeWorldPos(glued)) {
                         aimPoint = glued;
                         bestHeadPos = glued;
@@ -4253,7 +4306,7 @@ static inline uint64_t ESPPhaseNowUS(void) {
     } else {
         update_aim_assist_legit_tuning(false);
         AimLockClear();
-        if (!silentActive) s_lastAimPawn = 0;
+        if (!silentActive) s_lastAimPawnLocal = 0;
         if (bestTarget == 0) {
             gAimLockTarget = 0;
             gAimLockLostFrames = 0;
@@ -4303,52 +4356,15 @@ bool get_IsBeingRescued(uint64_t player) {
 static const int kPriVarScope = 12;
 static const int kPriVarFire  = 21;
 
-enum {
-    kStartFireNone = 0,
-    kStartFireReady = 1,
-    kStartFireFire = 2,
-    kStartFireCharge = 3,
-    kStartFireCancel = 4,
-    kStartFireWarmup = 5,
-    kStartFireCombinedDouble = 6,
-    kStartFireCombinedLeft = 7,
-    kStartFireAbilityStart = 8,
-    kStartFireAbilityEnd = 9,
-};
-
-static inline bool StartFireStateIsActive(int state) {
-    switch (state) {
-        case kStartFireFire:
-        case kStartFireCharge:
-        case kStartFireWarmup:
-        case kStartFireCombinedDouble:
-        case kStartFireCombinedLeft:
-        case kStartFireAbilityStart:
-            return true;
-        default:
-            return false;
-    }
-}
-
 bool get_IsFiring(uint64_t player) {
     if (!isVaildPtr(player)) return false;
     int startFire = ReadAddr<int>(player + kIsFiring);
-    if (startFire > 0 && startFire <= 9) {
-        return true;
-    }
+    if (startFire > 0 && startFire <= 9) return true;
     int startFireAlt = ReadAddr<int>(player + 0x1C14);
-    if (startFireAlt > 0 && startFireAlt <= 9) {
-        return true;
-    }
-    if (ReadAddr<uint8_t>(player + kIsPrepareAttack) != 0) {
-        return true;
-    }
-    if (ReadAddr<uint8_t>(player + 0x7D8) != 0) {
-        return true;
-    }
-    if (GetDataUInt16(player, kPriVarFire) != 0) {
-        return true;
-    }
+    if (startFireAlt > 0 && startFireAlt <= 9) return true;
+    if (ReadAddr<uint8_t>(player + kIsPrepareAttack) != 0) return true;
+    if (ReadAddr<uint8_t>(player + 0x7D8) != 0) return true;
+    if (GetDataUInt16(player, kPriVarFire) != 0) return true;
     return false;
 }
 
@@ -4387,6 +4403,7 @@ void EnableCamPC(uint64_t localPlayerPawn, bool isEnabled, float campcValue) {
         s_lastFollowCameraObj = 0;
         return;
     }
+    // 0x628 = AimRotationAux (SAI). FollowCamera = 0x690.
     uint64_t FollowCameraObj = ReadAddr<uint64_t>(localPlayerPawn + kFollowCameraObj);
     if (isVaildPtr(FollowCameraObj)) {
         if (isEnabled && campcValue > 0.0f) {
