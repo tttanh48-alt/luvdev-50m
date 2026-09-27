@@ -1118,6 +1118,11 @@ static inline void ClearBoxScreenForPawn(uint64_t pawn) {
     if (t.pawn == pawn) t = BoxScreenTrack{};
 }
 
+// Định nghĩa cho hàm đã khai báo ở Part 1
+void ClearProBoxScreenForPawn(uint64_t pawn) {
+    ClearBoxScreenForPawn(pawn);
+}
+
 // ---------- Pick stable head/hip ----------
 static inline Vector3 PickStableHeadRaw(uint64_t pawn, PosTrack &tr) {
     Vector3 head = getPositionExt(getHead(pawn));
