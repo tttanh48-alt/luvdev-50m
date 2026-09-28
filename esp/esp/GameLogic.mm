@@ -1,472 +1,492 @@
-#import "GameLogic.h"
-#import "offset.h"
-#import "GameOffsets.h"
-#import "Il2CppMatch.h"
-#import "../DSMemory.h"
-#import "../../app/KernelBoot.h"
-#import "../../remote/RemoteCall.h"
 #import <Foundation/Foundation.h>
-#import <math.h>
+#import "GameOffsets.h"
+#import "ESPPrefs.h"
+#import "offsetmax.h"
+#import "pid.h"
 
-extern uint64_t Moudule_Base;
+#include <string.h>
 
-#pragma mark - Function Game
+static NSString *const kSelectedGameIdKey = @"SelectedGameId";
+static NSString *const kGameIdFF = @"ff";
+static NSString *const kGameIdFFMax = @"ffmax";
 
-static uint64_t ReadMatchGameFromGameFacadeStatics(uint64_t GameFacade_Static) {
-    if (!isVaildPtr(GameFacade_Static)) return 0;
-    // Prefer CurrentMatchGame; fall back CurrentGame.
-    uint64_t matchGame = ReadAddr<uint64_t>(GameFacade_Static + (uint64_t)kCurrentMatchGame);
-    if (isVaildPtr(matchGame)) return matchGame;
-    matchGame = ReadAddr<uint64_t>(GameFacade_Static + (uint64_t)kCurrentGame);
-    if (isVaildPtr(matchGame)) return matchGame;
-    return 0;
-}
-
-// Il2CppClass.static_fields offset differs by runtime; try common slots.
-static uint64_t ReadGameFacadeStatics(uint64_t typeInfo) {
-    if (!isVaildPtr(typeInfo)) return 0;
-    const uint64_t staticOffs[] = {
-        (uint64_t)kTypeInfoStatics, // configured (0xB8)
-        0xB8, 0xB0, 0xC0, 0xA8, 0x90, 0x88
-    };
-    for (size_t i = 0; i < sizeof(staticOffs) / sizeof(staticOffs[0]); i++) {
-        uint64_t st = ReadAddr<uint64_t>(typeInfo + staticOffs[i]);
-        if (!isVaildPtr(st)) continue;
-        // Valid if either CurrentMatchGame or CurrentGame looks like a heap ptr.
-        uint64_t mg = ReadAddr<uint64_t>(st + (uint64_t)kCurrentMatchGame);
-        uint64_t cg = ReadAddr<uint64_t>(st + (uint64_t)kCurrentGame);
-        if (isVaildPtr(mg) || isVaildPtr(cg)) return st;
-    }
-    return 0;
-}
-
-uint64_t getMatchGame(uint64_t Moudule_Base) {
-    if (!isVaildPtr((uintptr_t)Moudule_Base))
-        return 0;
-
-    // Primary TypeInfo from offset table + nearby + known dumps.
-    // MAX current (offsetmax.h 2026-08): 0xC361EB0 — old 0xC3299C8 kept as fallback.
-    uint64_t primary = (uint64_t)kGameFacadeTypeInfo;
-    uint64_t candidates[] = {
-        primary,
-        primary - 0x1000, primary + 0x1000,
-        primary - 0x2000, primary + 0x2000,
-        0xBFD8978ULL, // known FFTH dump
-        0xC361EB0ULL, // current MAX GameFacade_TypeInfo
-        0xC3299C8ULL, // older MAX dump
-        0xC012848ULL, // FFTH table default
-    };
-    for (size_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++) {
-        uint64_t off = candidates[i];
-        if (off == 0 || off > 0x20000000ULL) continue;
-        uint64_t typeInfo = ReadAddr<uint64_t>(Moudule_Base + off);
-        if (!isVaildPtr(typeInfo)) continue;
-        uint64_t statics = ReadGameFacadeStatics(typeInfo);
-        if (!isVaildPtr(statics)) continue;
-        uint64_t matchGame = ReadMatchGameFromGameFacadeStatics(statics);
-        if (isVaildPtr(matchGame)) return matchGame;
-    }
-
-    // Il2CppResolveMatchGame needs a FreeFire RemoteCall session. While the
-    // SpringBoard overlay owns the global RemoteCall, calling it would dlsym
-    // into SB (useless) and add IPC load. Skip here; TypeInfo candidates above
-    // cover FF + current MAX.
-    return 0;
-}
-
-uint64_t getMatch(uint64_t matchgame) {
-    if (!isVaildPtr((uintptr_t)matchgame)) return 0;
-    return ReadAddr<uint64_t>(matchgame + kMatch);
-}
-
-uint64_t getLocalPlayer(uint64_t match) {
-    if (!isVaildPtr((uintptr_t)match)) return 0;
-    return ReadAddr<uint64_t>(match + kMatchLocalPlayer);
-}
-
-uint64_t CameraMain(uint64_t matchgame) {
-    if (!isVaildPtr((uintptr_t)matchgame)) return 0;
-    uint64_t CameraControllerManager = ReadAddr<uint64_t>(matchgame + kCameraControllerManager);
-    if (!isVaildPtr((uintptr_t)CameraControllerManager)) return 0;
-    return ReadAddr<uint64_t>(CameraControllerManager + kMainCamera);
-}
-
-// Bulk-read 16 floats (64 bytes) so view/proj don't tear across 16 remote reads
-// under lag — torn matrices make ESP boxes "slide with strafe then snap back".
-static void TipaReadMatrix16(uint64_t addr, float *out) {
-    if (!_read((long)addr, out, 16 * (int)sizeof(float))) {
-        for (int i = 0; i < 16; i++)
-            out[i] = ReadAddr<float>(addr + (uint64_t)i * 4u);
-    }
-}
-
-static void TipaMultiply4x4(const float *P, const float *V, float *out) {
-    for (int col = 0; col < 4; col++) {
-        for (int row = 0; row < 4; row++) {
-            float s = 0;
-            for (int k = 0; k < 4; k++)
-                s += P[k * 4 + row] * V[col * 4 + k];
-            out[col * 4 + row] = s;
-        }
-    }
-}
-
-bool GetViewMatrixInto(uint64_t cameraMain, float *out16) {
-    if (!out16 || !isVaildPtr((uintptr_t)cameraMain))
-        return false;
-    uint64_t v1 = ReadAddr<uint64_t>(cameraMain + kCameraInner);
-    if (!isVaildPtr((uintptr_t)v1))
-        return false;
-
-    float V[16], P[16];
-    TipaReadMatrix16(v1 + kViewMatrixOff, V);
-    TipaReadMatrix16(v1 + kProjMatrixOff, P);
-    TipaMultiply4x4(P, V, out16);
-    // Reject NaN / zeroed matrix (common mid-teleport or bad ptr).
-    if (isnan(out16[0]) || isnan(out16[15]))
-        return false;
-    float sumAbs = 0.f;
-    for (int i = 0; i < 16; i++) sumAbs += fabsf(out16[i]);
-    if (sumAbs < 1e-4f)
-        return false;
-    return true;
-}
-
-float* GetViewMatrix(uint64_t cameraMain) {
-    static float matrix[16];
-    if (!GetViewMatrixInto(cameraMain, matrix))
-        return nullptr;
-    return matrix;
-}
-
-bool IsAtLobby(uint64_t Moudule_Base) {
-    if (!isVaildPtr((uintptr_t)Moudule_Base)) return true;
-    // Use shared resolver (multi-offset + multi static_fields) so lobby detect
-    // matches getMatchGame and does not false-lobby when TypeInfo moved slightly.
-    uint64_t matchGame = getMatchGame(Moudule_Base);
-    return !isVaildPtr(matchGame);
-}
-
-uint64_t getTransNode(uint64_t BodyPart) {
-    if (!isVaildPtr((uintptr_t)BodyPart)) return 0;
-    uint64_t node = ReadAddr<uint64_t>(BodyPart + kBodyPartTransNode);
-    if (!isVaildPtr((uintptr_t)node)) return 0;
-    return node;
-}
-
-// Dump stores ITransformNode* on Player. getPositionExt expects a Transform-like
-// object and first reads +kTransformInner (0x10). Try:
-//  1) node itself (works if node already has transform layout)
-//  2) node->+0x10 (common ITransformNode -> Transform)
-// Return the pointer that yields a non-zero world position.
-static uint64_t getBoneTrans(uint64_t player, uintptr_t nodeOffset) {
-    if (!isVaildPtr((uintptr_t)player)) return 0;
-    uint64_t node = ReadAddr<uint64_t>(player + nodeOffset);
-    if (!isVaildPtr((uintptr_t)node)) return 0;
-
-    Vector3 direct = getPositionExt(node);
-    if (!(direct.x == 0.0f && direct.y == 0.0f && direct.z == 0.0f)) {
-        return node;
-    }
-
-    uint64_t inner = getTransNode(node); // node + 0x10
-    if (isVaildPtr((uintptr_t)inner)) {
-        Vector3 via = getPositionExt(inner);
-        if (!(via.x == 0.0f && via.y == 0.0f && via.z == 0.0f)) {
-            return inner;
-        }
-        // Some wrappers nest one more level.
-        uint64_t inner2 = getTransNode(inner);
-        if (isVaildPtr((uintptr_t)inner2)) {
-            Vector3 via2 = getPositionExt(inner2);
-            if (!(via2.x == 0.0f && via2.y == 0.0f && via2.z == 0.0f)) {
-                return inner2;
-            }
-        }
-        return inner;
-    }
-    return node;
-}
-
-uint64_t getHead(uint64_t player) {
-    // FF dump: HeadNode 0x638, next slot 0x640 is HIP (kHipNode).
-    // NEVER fall back to +0x8 — that made aim snap head→hip→head (chest jitter while firing).
-    return getBoneTrans(player, kHeadNode);
-}
-
-uint64_t getHip(uint64_t player) {
-    return getBoneTrans(player, kHipNode);
-}
-
-uint64_t getLeftAnkle(uint64_t player) {
-    return getBoneTrans(player, kLeftAnkleNode);
-}
-
-uint64_t getRightAnkle(uint64_t player) {
-    return getBoneTrans(player, kRightAnkleNode);
-}
-
-uint64_t getRightToeNode(uint64_t player) {
-    return getBoneTrans(player, kRightToeNode);
-}
-
-uint64_t getLeftToeNode(uint64_t player) {
-    return getBoneTrans(player, kLeftToeNode);
-}
-uint64_t getLeftShoulder(uint64_t player) {
-    return getBoneTrans(player, kLeftShoulderNode);
-}
-
-uint64_t getLeftElbow(uint64_t player) {
-    return getBoneTrans(player, kLeftElbowNode);
-}
-
-uint64_t getLeftHand(uint64_t player) {
-    return getBoneTrans(player, kLeftHandNode);
-}
-
-uint64_t getRightShoulder(uint64_t player) {
-    return getBoneTrans(player, kRightShoulderNode);
-}
-
-uint64_t getRightElbow(uint64_t player) {
-    return getBoneTrans(player, kRightElbowNode);
-}
-
-uint64_t getRightHand(uint64_t player) {
-    return getBoneTrans(player, kRightHandNode);
-}
-
-bool isLocalTeamMate(uint64_t localPlayer, uint64_t Player) {
-    if (!isVaildPtr(localPlayer) || !isVaildPtr(Player)) return false;
-    if (localPlayer == Player) return true;
-    extern bool isAimIgnoreBot;
-    const bool isBot = ReadAddr<uint8_t>(Player + (uint64_t)kIsClientBot) != 0;
-    if (isBot && !isAimIgnoreBot) return false;
-    COW_GamePlay_PlayerID_o myPlayerID = ReadAddr<COW_GamePlay_PlayerID_o>(localPlayer + kPlayerID);
-    COW_GamePlay_PlayerID_o PlayerID = ReadAddr<COW_GamePlay_PlayerID_o>(Player + kPlayerID);
-    int myTeamID = myPlayerID.m_TeamID;
-    int TeamID = PlayerID.m_TeamID;
-    if (myTeamID == 0 || TeamID == 0) return false;
-    return myTeamID == TeamID;
-}
-
-bool isSamePlayerAsLocal(uint64_t localPlayer, uint64_t player) {
-    if (!isVaildPtr(player)) return false;
-    if (isVaildPtr(localPlayer)) {
-        if (localPlayer == player) return true;
-        uint64_t myUid = ReadAddr<uint64_t>(localPlayer + kUserID);
-        uint64_t uid = ReadAddr<uint64_t>(player + kUserID);
-        if (myUid != 0 && uid != 0 && myUid == uid) return true;
-        COW_GamePlay_PlayerID_o myId = ReadAddr<COW_GamePlay_PlayerID_o>(localPlayer + kPlayerID);
-        COW_GamePlay_PlayerID_o id = ReadAddr<COW_GamePlay_PlayerID_o>(player + kPlayerID);
-        if (myId.m_Value != 0 && myId.m_Value == id.m_Value) return true;
-    }
-    return false;
-}
-
-// PRI DataPool on Player (dump-stable): pool @ 0x70, inner @ +0x10,
-// entries base +0x20, stride 0x8, value @ +0x18. varID 0=CurHP, 1=MaxHP.
-// Some seasons/build paths put a thin wrapper; try pool ptr alts + value size.
-static int ReadDataPoolVar(uint64_t player, int varID) {
-    if (!isVaildPtr(player) || varID < 0 || varID > 64) return 0;
-    const uint64_t poolOff = kDataPool ? kDataPool : 0x70;
-    const uint64_t innerOff = kDataPoolInner ? kDataPoolInner : 0x10;
-    const uint64_t entriesBase = kDataPoolEntriesBase ? kDataPoolEntriesBase : 0x20;
-    const uint64_t stride = kDataPoolEntryStride ? kDataPoolEntryStride : 0x8;
-    const uint64_t valueOff = kDataPoolValue ? kDataPoolValue : 0x18;
-
-    // Player.DataPool may be the pool object, or a one-hop wrapper.
-    uint64_t pools[3] = {
-        ReadAddr<uint64_t>(player + poolOff),
-        0, 0
-    };
-    if (isVaildPtr(pools[0])) {
-        pools[1] = ReadAddr<uint64_t>(pools[0] + 0x10);
-        pools[2] = ReadAddr<uint64_t>(pools[0] + 0x18);
-    }
-
-    for (int pi = 0; pi < 3; pi++) {
-        uint64_t pool = pools[pi];
-        if (!isVaildPtr(pool)) continue;
-        const uint64_t innerOffs[] = { innerOff, 0x10, 0x18, 0x08, 0x00 };
-        for (size_t i = 0; i < sizeof(innerOffs) / sizeof(innerOffs[0]); i++) {
-            uint64_t inner = (innerOffs[i] == 0) ? pool : ReadAddr<uint64_t>(pool + innerOffs[i]);
-            if (!isVaildPtr(inner)) continue;
-            uint64_t entry = ReadAddr<uint64_t>(inner + entriesBase + stride * (uint64_t)varID);
-            if (!isVaildPtr(entry)) continue;
-            // Value may be int32 or uint16 at +0x18 (and rarely +0x10/+0x14).
-            const uint64_t valOffs[] = { valueOff, 0x18, 0x14, 0x10 };
-            for (size_t v = 0; v < sizeof(valOffs) / sizeof(valOffs[0]); v++) {
-                int32_t i32 = ReadAddr<int32_t>(entry + valOffs[v]);
-                if (varID <= 1) {
-                    // HP / MaxHP: accept uint16 range stored in low word too.
-                    if (i32 >= 0 && i32 <= 2000) return i32;
-                    uint16_t u16 = ReadAddr<uint16_t>(entry + valOffs[v]);
-                    if (u16 > 0 && u16 <= 2000) return (int)u16;
-                } else {
-                    return i32;
-                }
-            }
-        }
-    }
-    return 0;
-}
-
-int GetDataUInt16(uint64_t player, int varID) {
-    return ReadDataPoolVar(player, varID);
-}
-
-void SetDataUInt16(uint64_t player, int varID, uint16_t value) {
-    if (!isVaildPtr(player)) return;
-    uint64_t IPRIDataPool = ReadAddr<uint64_t>(player + (kDataPool ? kDataPool : 0x70));
-    if (!isVaildPtr(IPRIDataPool)) return;
-    uint64_t v2 = ReadAddr<uint64_t>(IPRIDataPool + (kDataPoolInner ? kDataPoolInner : 0x10));
-    if (!isVaildPtr(v2)) return;
-    uint64_t v4 = ReadAddr<uint64_t>(v2 + (kDataPoolEntryStride ? kDataPoolEntryStride : 0x8) * (uint64_t)varID
-                                     + (kDataPoolEntriesBase ? kDataPoolEntriesBase : 0x20));
-    if (!isVaildPtr(v4)) return;
-    WriteAddr<uint16_t>(v4 + (kDataPoolValue ? kDataPoolValue : 0x18), value);
-}
-
-int get_CurHP(uint64_t Player) {
-    return ReadDataPoolVar(Player, 0);
-}
-
-int get_MaxHP(uint64_t Player) {
-    int maxHp = ReadDataPoolVar(Player, 1);
-    // Some shells expose only CurHP; treat positive CurHP as alive shell.
-    if (maxHp <= 0) {
-        int cur = ReadDataPoolVar(Player, 0);
-        if (cur > 0 && cur <= 2000) return cur;
-    }
-    return maxHp;
-}
-
-void EnableFastReload(uint64_t localPlayerPawn, bool isEnabled, float speedMult) {
-    if (!isVaildPtr(localPlayerPawn)) return;
-    // PlayerAttributes: FF 0x700 / MAX 0x708 (kPlayerAttributes)
-    uint64_t attrsOff = kPlayerAttributes ? kPlayerAttributes : 0x700;
-    uint64_t attrs = ReadAddr<uint64_t>(localPlayerPawn + attrsOff);
-    if (!isVaildPtr(attrs)) return;
-    WriteAddr<bool>(attrs + 0xD8, isEnabled); // ReloadNoConsumeAmmoclip
-    WriteAddr<bool>(attrs + 0xD9, isEnabled); // ShootNoReload
-    (void)speedMult;
-}
-
-// EAimAssist dump: AllOn=0, OffOnSighting=1, AllOff=2
-enum : int32_t {
-    kEAimAssistAllOn = 0,
-    kEAimAssistOffOnSighting = 1,
-    kEAimAssistAllOff = 2,
+// Free Fire THG — from D:\Download\dump ff thg (current season)
+// TypeInfo (script.json): GameFacade 0xC012848, KBCJOEFJEFJ(AimAssist) 0xC015B80
+// NOTE: field offsets often stay same across hotfixes; TypeInfo almost always moves.
+static const GameOffsets kOffsetsFF = {
+    .GameFacadeTypeInfo = 0xBB46A50, // 1.132.1: DSGames:FF_GAMEFACADE_CLASS
+    .TypeInfoStatics = 0xB8,
+    .CurrentGame = 0x0,
+    .CurrentMatchGame = 0x8,
+    .Match = 0x90,
+    .MatchLocalPlayer = 0xD8,
+    .MatchGameSceneLoaded = 0x140, // MatchGame.m_SceneLoaded
+    .CameraControllerManager = 0xD8,
+    .MainCamera = 0x20,
+    .CameraInner = 0x10,
+    .ViewMatrixOff = 0x80,
+    .ProjMatrixOff = 0xC0,
+    .BodyPartTransNode = 0x10,
+    .HeadNode = 0x6A0, // 1.132.1: DSGames:FF_BONE_HEAD
+    .HipNode = 0x6A8, // 1.132.1: DSGames:FF_BONE_HIP
+    .LeftAnkleNode = 0x6D8, // 1.132.1: DSGames:FF_BONE_LANKLE
+    .RightAnkleNode = 0x6E0, // 1.132.1: DSGames:FF_BONE_RANKLE
+    .RightToeNode = 0x6F0, // 1.132.1: DSGames:FF_BONE_RTOE
+    .LeftToeNode = 0x6E8, // 1.132.1: Player.GMJLIMFHMAE
+    .LeftShoulderNode = 0x6C0, // 1.132.1: Player.CFMDINAGALM
+    .RightShoulderNode = 0x6C8, // 1.132.1: Player.IIPBIDIBJDK
+    .NeckNode = 0x6B0,    // 1.132.1: Player.FFFPCADFFGA — Hip→Shoulder slot
+    .ChestNode = 0x6B8,   // 1.132.1: Player.CBHHCCNKOND — Hip→Shoulder slot
+    .SpineNode = 0x6D0,   // 1.132.1: Player.EJJBPONNECG — after shoulders
+    .LeftHandNode = 0x720, // 1.132.1: DSGames:FF_BONE_LHAND
+    .RightHandNode = 0x718, // 1.132.1: DSGames:FF_BONE_RHAND
+    .LeftElbowNode = 0x730, // 1.132.1: DSGames:FF_BONE_LFORE
+    .RightElbowNode = 0x728, // 1.132.1: DSGames:FF_BONE_RFORE
+    .PlayerIDStruct = 0x408, // 1.132.1: Player.MHGFKKALMDK
+    .PlayerID = 0x408, // 1.132.1: Player.MHGFKKALMDK
+    .UserID = 0x3F8, // 1.132.1: Player.DBGOHLDFABH
+    .IsClientBot = 0x4A0, // dump.cs Player.IsClientBot (was stale 0x438)
+    .IsDead = 0x7C, // 1.132.1: AttackableEntity.PIKCADEGMOH (get_IsDead)
+    .EntityRecycled = 0x28, // 1.132.1: GCommon.Entity.m_Recycle
+    .EntityNeedUpdate = 0x20, // 1.132.1: GCommon.Entity.NeedUpdate
+    .DataPool = 0x70,
+    .DataPoolInner = 0x10,
+    .DataPoolEntriesBase = 0x20,
+    .DataPoolEntryStride = 0x8,
+    .DataPoolValue = 0x18,
+    .AimRotation = 0x614, // 1.132.1: DSGames:FF_PLR_AimRot
+    .AimRotationAux = 0x628, // 1.132.1: DSGames:FF_PLR_AimRotAlt
+    .CurrentAimRotation = 0x1A8C, // 1.132.1: Player.m_CurrentAimRotation
+    .CallSetAimRotationCount = 0x810, // 1.132.1: Player.CallSetAimRotationCount (dump.cs:1216954) — bumped only by SetAimRotation, snapshotted by report 0x69 then zeroed
+    .UserControlHandler = 0x4D0, // 1.132.1: Player.LBPGBNKABJE (dump.cs:1216779)
+    .AimSampleX = 0xA0,          // UserControlHandler.m_aimInputSampleX (dump.cs:1458229)
+    .AimSampleY = 0xA8,          // m_aimInputSampleY (1458230)
+    .AimSampleHead = 0xB0,       // m_aimInputSampleHead (1458231)
+    .AimSampleFilled = 0xB4,     // m_aimInputSampleFilled (1458232)
+    .AimSampleTickCounter = 0xB8, // m_aimInputSampleTickCounter (1458233)
+    .AimAssistTypeInfo = 0xBB48080, // 1.132.1: IILKFCMKIBG::.cctor ARM64 ADRP/ADD at 0x63B815C/0x63B8160
+    .AaStaticKnolgmjlcef = 0x24,
+    .AaStaticNfkcllpalej = 0x28,
+    .GameVarDefTypeInfo = 0xBB46AF8, // 1.132.1: adrp x22,#0xbb46000 / add x22,#0xaf8 (SampleAimInput 0x6B58518)
+    .GvdEnableCheckBuf = 0x458C,       // dump.cs GameVarDef.EnableCheckBuf — AC 0x5632eec ldrb cmp #1
+    .GvdEnableAimInputSample = 0x458D, // dump.cs — SampleAimInput 0x6b58534 ldrb cmp #1
+    .GvdAimInputSampleCount = 0x4590,  // dump.cs — FillAimInputSamples 0x6b58a28 ldr cmp #1
+    .GvdAimInputSampleIntervalTick = 0x4594, // dump.cs:305087 AimInputSampleIntervalTick
+    .GvdEnableInternalSetRotation = 0xE4, // dump.cs GameVarDef.EnableInternalSetRotation — CurrentAimWriter 0x5a63bf8 ldrb [x8,#0xe4]
+    .GvdRotationPlan = 0x380C, // dump.cs GameVarDef.RotationPlan — HFIKAJMBGJG 0x576c7c8 ldr [x8,#0x380c]
+    .CheckBufPending = 0x624,  // dump.cs:1216869 IKCEKAKDFJC bool after AimRot 0x614 — MarkGGPVerifyCheckBufPending
+    .AimAssistPtr = 0x638, // 1.132.1: Player.m_AimAssist
+    .AimAssistIceWallPtr = 0x640, // 1.132.1: Player.m_AimAssistForIceWall
+    .EAimAssistMode = 0x660, // 1.132.1: Player.ADMMKBGOLJL
+    .PlayerAnimComponent = 0x760, // 1.132.1: Player.NLENBNNCDMC
+    .PlayerAttributes = 0x768, // 1.132.1: Player.IODLOCEJIOK
+    .RunSpeedUpScale = 0x2C0, // 1.132.1: PlayerAttributes.RunSpeedUpScale
+    .IsFiring = 0x1DF0, // 1.132.1: Player.LOCPKOHLOHE (NDFCBGGDEFP StartFireState enum — NOT a bool)
+    .IsPrepareAttack = 0x848, // 1.132.1: ARM64 0x563711c: ldrb w0, [x0, #0x848]
+    .LastFireBtnDownTime = 0x183C, // 1.132.1: Player.LastFireBtnDownTime
+    .LastPlayBulletTrackEffectTime = 0xE84, // 1.132.1: Player.LastPlayBulletTrackEffectTime
+    .LastSmartFireTime = 0xDF0, // 1.132.1: Player.LastSmartFireTime
+    .VisibleObj = 0xAD0, // 1.132.1: DSGames:FF_PLR_VisMask
+    .VisibleObjFlags = 0x10,
+    .ISVisibleCamera = 0x1,
+    .ISVisibleDynamicPVS = 0x100000,
+    .ISVisibleFPPMask = 0xFFFBFFFF,
+    .MainCameraTransform = 0x3E8, // 1.132.1: DSGames:FF_PLR_CamTfm
+    .MyPhysXData = 0x1D48, // 1.132.1: Player.GBJCJJNPPEC
+    .PhxNpeononogeo = 0x20,
+    .GhgState = 0x10,
+    .Knocked = 0x1258, // 1.132.1: Player.IsKnockedDownBleed
+    .BeingRescuredState = 0x1CA2, // 1.132.1: Player.BBMCPEHJGCM
+    .MatchPlayerDict = 0x128,
+    .DictEntries = 0x18,
+    .DictCount = 0x20,
+    .Il2CppArrayMaxLength = 0x18,
+    .Il2CppArrayItems = 0x20,
+    .DictEntryStrideBytePlayer = 0x28,
+    .DictEntryValueOffByte = 0x20,
+    .TransformInner = 0x10,
+    .TransformMatrix = 0x38,
+    .TransformIndex = 0x40,
+    .MatrixList = 0x18,
+    .MatrixIndices = 0x20,
+    .Nickname = 0x490, // 1.132.1: Player.BDHGDLFDHAL
+    .StringFirstChar = 0x14,
+    .ActiveWeapon = 0x600, // 1.132.1: Player.ActiveUISightingWeapon
+    .WeaponID = 0x600,
+    .WeaponCategory = 0xC4,
+    .WeaponHolder = 0x740, // 1.132.1: DSGames:FF_PLR_InvMgr
+    .HolderActiveWeapon = 0xA0,
+    .WeaponRepItem = 0x768, // 1.132.1: HBIBDMMOOOK.EPDDDHPMIKO
+    .SwitchWeaponTime = 0x284, // 1.132.1: UGCWeaponRepItem.<SwitchWeaponTime>k__BackingField
+    .PreSwitchWeaponTime = 0x288, // 1.132.1: UGCWeaponRepItem.<PreSwitchWeaponTime>k__BackingField
+    .PostSwitchWeaponTime = 0x28C, // 1.132.1: UGCWeaponRepItem.<PostSwitchWeaponTime>k__BackingField
+    .NicknameDisplay = 0x498, // 1.132.1: DSGames:FF_PLR_Nick
+    .HitObjectInfo = 0xE50, // dump.cs Player.FDMIEDDNCEC (CGKJLKPMGDJ) — was stale 0xDC8
+    .HitObjectInfoAlt = 0xE58, // dump.cs Player.PKIOAMDCOPB (CGKJLKPMGDJ) — was stale 0xDD0
+    .HitObjectDir = 0x40, // GMPGMPFNMFP.IKDEGKIICJP
+    .HitObjectOrigin = 0x4C, // GMPGMPFNMFP.LMAEGPEAECO
+    .FollowCameraObj = 0x690, // dump.cs Player.AHNCPOJPPCL FollowCamera (0x628 is AimRotationAux — do not reuse)
+    .FollowCameraDistance = 0x70,
+    .VehicleIAmIn = 0x920, // 1.132.1: Player.NABHAGPOHJF
+    .LevelStropIAmOn = 0x938, // 1.132.1: Player.DPPMGDFKBLO
+    .RootNode = 0x698, // 1.132.1: DSGames:FF_BONE_NECK
+    .PlayerTransform = 0x700, // 1.132.1: Player.BDMMCNJOHNI
+    .LastAimingTargetFromWeapon = 0xE68, // 1.132.1: Player.<JMPDDMAMFML>k__BackingField
+    .BaseGameUIScene = 0x10,
+    .UIInGameScenePrepareCtrl = 0x730, // 1.132.1: UIInGameScene.m_PrepareCtrl
+    .UIInGameSceneQuickUseMedkit = 0xA40, // 1.132.1: UIInGameScene.m_UIHudQuickUseMedkitController
+    .PrepTimerStartTime = 0xB0, // 1.132.1: UIHudPreparationTimerController.m_StartTime
+    .PrepTimerTotalTime = 0xB4, // 1.132.1: UIHudPreparationTimerController.m_TotalTime
+    .PrepTimerContextType = 0xB8, // 1.132.1: UIHudPreparationTimerController.m_ContextType
+    .PrepTimerStage1Time = 0xBC, // 1.132.1: UIHudPreparationTimerController.m_Stage1Time
+    .PrepTimerIsFinished = 0x128, // 1.132.1: UIHudPreparationTimerController.m_IsPrepareFinished
+    .PrepTimerProgressSpeed = 0x148, // 1.132.1: UIHudPreparationTimerController.m_CurrentProgressSpeed
+    .PrepTimerProgressRate = 0x14C, // 1.132.1: UIHudPreparationTimerController.m_CurrentProgressRate
+    .PlayerPrepTimerType = 0x4C4, // 1.132.1: Player.NLDHFLPENMC
+    .PlayerNetPrepDuration = 0x2510, // 1.132.1: PlayerNetwork.JPDINEAKPLA
+    .PlayerNetPrepType = 0x2514, // 1.132.1: PlayerNetwork.PDAHKMAMAFO
+    .PlayerNetPrepFloatA = 0x2524, // 1.132.1: PlayerNetwork.GGNLKLLOGMF
+    .PlayerNetPrepFloatB = 0x2528, // 1.132.1: PlayerNetwork.GDDPGFNHIKF
+    .PlayerIsCuring = 0x4F0, // 1.132.1: ARM64 0x56321ec: ldrb w0, [x19, #0x4f0]
+    .PlayerIsPreparing = 0x4F9, // 1.132.1: ARM64 0x5632268: ldrb w0, [x0, #0x4f9]
+    .PlayerIsEating = 0x4FA, // 1.132.1: ARM64 0x5632278: ldrb w0, [x0, #0x4fa]
+    .PlayerIsRepairing = 0x4FB, // 1.132.1: ARM64 0x5632288: ldrb w0, [x0, #0x4fb]
+    .PlayerNetPrepFloatC = 0x252C, // 1.132.1: PlayerNetwork.ALFHOFAMDLH
+    .PlayerNetPrepFloatD = 0x2538, // 1.132.1: PlayerNetwork.AMKBOGJODLG
+    .WeaponConsumableCsv = 0x68,
+    .WeaponConsumableCsvFloatA = 0x24,
+    .WeaponConsumableCsvFloatB = 0x28,
+    .WeaponConsumableCsvFloatC = 0x40,
+    .WeaponRepairRepItem = 0x78,
+    .WeaponFirstAidRepItem = 0x80,
+    .WeaponInhalerRepItem = 0x88,
+    .UGCFirstAidDuration = 0x34,
+    .UGCFirstAidPretime = 0x38,
+    .UGCRepairPreTime = 0x20,
+    .RepFireInterval = 0x1F8, // 1.132.1: UGCWeaponRepItem.<FireInterval>k__BackingField
+    .RepRepeatFireInterval = 0x220, // 1.132.1: UGCWeaponRepItem.<RepeatFireInterval>k__BackingField
+    .RepScatterNum = 0x214, // 1.132.1: UGCWeaponRepItem.<ScatterNum>k__BackingField
+    .RepScatterMax = 0x218, // 1.132.1: UGCWeaponRepItem.<ScatterMax>k__BackingField
+    .RepScatterSpeed = 0x260, // 1.132.1: UGCWeaponRepItem.<ScatterSpeed>k__BackingField
+    .RepScatterRecoverSpeed = 0x264, // 1.132.1: UGCWeaponRepItem.<ScatterRecoverSpeed>k__BackingField
+    .RepScatterMove = 0x26C, // 1.132.1: UGCWeaponRepItem.<ScatterMove>k__BackingField
+    .AttrsBuffWeaponScatterScale = 0x118, // 1.132.1: PlayerAttributes.BuffWeaponScatterScale
+    .AttrsBuffEcaWeaponScatterScale = 0x120, // 1.132.1: PlayerAttributes.BuffEcaWeaponScatterScale
+    .AttrsBuffEcaIgnoreWeaponScatter = 0x350, // 1.132.1: PlayerAttributes.BuffEcaIgnoreWeaponScatter
+    .AttrsReloadNoConsumeAmmo = 0x110, // 1.132.1: PlayerAttributes.ReloadNoConsumeAmmoclip (stale 0xD8 = HBMLFJEAEDC float)
+    .AttrsShootNoReload = 0x111,       // 1.132.1: PlayerAttributes.ShootNoReload (stale 0xD9 = NELIGHEPBDL int)
+    .AttrsFireIntervalScale = 0x258, // 1.132.1: ARM64 0x648781c: ldr s0, [x19, #0x258]
+    .AttrsFireIntervalScaleTwo = 0x270, // 1.132.1: ARM64 0x6487a88: ldr s0, [x19, #0x270]
+    .AttrsFireIntervalScaleBuffECA = 0x268, // 1.132.1: PlayerAttributes.FireIntervalScaleBuffECA_AccumulateWithBounds
+    .ScaleAccumA = 0x18,
+    .ScaleAccumB = 0x1C,
+    .ScaleAccumC = 0x20,
+    .ScaleAccumD = 0x24,
+    .ScaleAccumE = 0x28,
+    .SafeRefHashSet = 0x10,
+    .HashSetBuckets = 0x10,
+    .HashSetSlots = 0x18,
+    .HashSetCount = 0x20,
+    .HashSetLastIndex = 0x24,
+    .HashSetFreeList = 0x28,
+    .FppGameModeEnable = 0x829, // 1.132.1: GameModeSetting.FPPGameModeEnable
+    .FppRecoil = 0x870, // 1.132.1: GameModeSetting.FPPRecoil
+    .FppVibrateRotate = 0x871, // 1.132.1: GameModeSetting.FPPVibrateRotate
+    .FppVibrateRotateSpeed = 0x874, // 1.132.1: GameModeSetting.FPPVibrateRotateSpeed
+    .FppRecoilYCycleTime = 0x880, // 1.132.1: GameModeSetting.FPPRecoilYCycleTime
+    .FppRecoilZCycleTime = 0x884, // 1.132.1: GameModeSetting.FPPRecoilZCycleTime
+    .FppRecoilYFactor = 0x888, // 1.132.1: GameModeSetting.FPPRecoilYFactor
+    .FppRecoilZFactor = 0x88C, // 1.132.1: GameModeSetting.FPPRecoilZFactor
+    .FppRecoilBackwardX = 0x890, // 1.132.1: GameModeSetting.FPPRecoilBackwardX
+    .FppRecoilBackwardZ = 0x894, // 1.132.1: GameModeSetting.FPPRecoilBackwardZ
+    .FppRecoilBackwardSpeed = 0x898, // 1.132.1: GameModeSetting.FPPRecoilBackwardSpeed
+    .FppCameraMaxfireRotateAngle = 0x8B4, // 1.132.1: GameModeSetting.FPPCameraMaxfireRotateAngle
+    .FppCameraFireRotateTime = 0x8B8, // 1.132.1: GameModeSetting.FPPCameraFireRotateTime
+    .RuntimeWeapon = 0x17E8, // 1.132.1: Player.FCKONEHNLHP
 };
 
-// Soft-zero ONLY the two dump-confirmed chest-magnet static scales.
-// Never spray-write AA object instances or unknown static slots — that caused
-// FreeFire SIGSEGV (bad ptr ~0x100000000) after writing m_AimAssist+0x10..0x40.
-// Save originals so wall-off restore can put vanilla AA back (without this,
-// Aim Behind Wall ON zeroed strength forever → aimbot/assist felt broken after OFF).
-static float g_savedAaStaticA = 1.0f;
-static float g_savedAaStaticB = 1.0f;
-static bool g_aaStaticsSaved = false;
-static bool g_aaStaticsZeroed = false;
+// Free Fire MAX — values from offsetmax.h (clone of FF until user patches)
+static const GameOffsets kOffsetsFFMax = {
+    .GameFacadeTypeInfo = MAX_kGameFacadeTypeInfo,
+    .TypeInfoStatics = MAX_kTypeInfoStatics,
+    .CurrentGame = MAX_kCurrentGame,
+    .CurrentMatchGame = MAX_kCurrentMatchGame,
+    .Match = MAX_kMatch,
+    .MatchLocalPlayer = MAX_kMatchLocalPlayer,
+    .MatchGameSceneLoaded = MAX_kMatchGameSceneLoaded,
+    .CameraControllerManager = MAX_kCameraControllerManager,
+    .MainCamera = MAX_kMainCamera,
+    .CameraInner = MAX_kCameraInner,
+    .ViewMatrixOff = MAX_kViewMatrixOff,
+    .ProjMatrixOff = MAX_kProjMatrixOff,
+    .BodyPartTransNode = MAX_kBodyPartTransNode,
+    .HeadNode = MAX_kHeadNode,
+    .HipNode = MAX_kHipNode,
+    .LeftAnkleNode = MAX_kLeftAnkleNode,
+    .RightAnkleNode = MAX_kRightAnkleNode,
+    .RightToeNode = MAX_kRightToeNode,
+    .LeftToeNode = MAX_kLeftToeNode,
+    .LeftShoulderNode = MAX_kLeftShoulderNode,
+    .RightShoulderNode = MAX_kRightShoulderNode,
+    .NeckNode = MAX_kNeckNode,
+    .ChestNode = MAX_kChestNode,
+    .SpineNode = MAX_kSpineNode,
+    .LeftHandNode = MAX_kLeftHandNode,
+    .RightHandNode = MAX_kRightHandNode,
+    .LeftElbowNode = MAX_kLeftElbowNode,
+    .RightElbowNode = MAX_kRightElbowNode,
+    .PlayerIDStruct = MAX_kPlayerIDStruct,
+    .PlayerID = MAX_kPlayerID,
+    .UserID = MAX_kUserID,
+    .IsClientBot = MAX_kIsClientBot,
+    .IsDead = MAX_kIsDead,
+    .EntityRecycled = MAX_kEntityRecycled,
+    .EntityNeedUpdate = MAX_kEntityNeedUpdate,
+    .DataPool = MAX_kDataPool,
+    .DataPoolInner = MAX_kDataPoolInner,
+    .DataPoolEntriesBase = MAX_kDataPoolEntriesBase,
+    .DataPoolEntryStride = MAX_kDataPoolEntryStride,
+    .DataPoolValue = MAX_kDataPoolValue,
+    .AimRotation = MAX_kAimRotation,
+    .AimRotationAux = MAX_kAimRotationAux,
+    .CurrentAimRotation = MAX_kCurrentAimRotation,
+    .CallSetAimRotationCount = MAX_kCallSetAimRotationCount,
+    .UserControlHandler = MAX_kUserControlHandler, // TH 0x4D0 + 8 = 0x4D8
+    .AimSampleX = 0xA0, // UserControlHandler object layout — same as TH
+    .AimSampleY = 0xA8,
+    .AimSampleHead = 0xB0,
+    .AimSampleFilled = 0xB4,
+    .AimSampleTickCounter = 0xB8,
+    .AimAssistTypeInfo = MAX_kAimAssistTypeInfo,
+    .AaStaticKnolgmjlcef = MAX_kAaStaticKnolgmjlcef,
+    .AaStaticNfkcllpalej = MAX_kAaStaticNfkcllpalej,
+    .GameVarDefTypeInfo = MAX_kGameVarDefTypeInfo,
+    .GvdEnableCheckBuf = MAX_kGvdEnableCheckBuf,
+    .GvdEnableAimInputSample = MAX_kGvdEnableAimInputSample,
+    .GvdAimInputSampleCount = MAX_kGvdAimInputSampleCount,
+    .GvdAimInputSampleIntervalTick = MAX_kGvdAimInputSampleIntervalTick,
+    .GvdEnableInternalSetRotation = MAX_kGvdEnableInternalSetRotation,
+    .GvdRotationPlan = MAX_kGvdRotationPlan,
+    .CheckBufPending = 0x62C, // TH 0x624 + MAX mid-field +8 (AimRot 0x61c→0x624 bool, Aux 0x630)
+    .AimAssistPtr = MAX_kAimAssistPtr,
+    .AimAssistIceWallPtr = MAX_kAimAssistIceWallPtr,
+    .EAimAssistMode = MAX_kEAimAssistMode,
+    .PlayerAnimComponent = MAX_kPlayerAnimComponent,
+    .PlayerAttributes = MAX_kPlayerAttributes,
+    .RunSpeedUpScale = MAX_kRunSpeedUpScale,
+    .IsFiring = MAX_kIsFiring,
+    .IsPrepareAttack = MAX_kIsPrepareAttack,
+    .LastFireBtnDownTime = MAX_kLastFireBtnDownTime,
+    .LastPlayBulletTrackEffectTime = MAX_kLastPlayBulletTrackEffectTime,
+    .LastSmartFireTime = MAX_kLastSmartFireTime,
+    .VisibleObj = MAX_kVisibleObj,
+    .VisibleObjFlags = MAX_kVisibleObjFlags,
+    .ISVisibleCamera = MAX_kISVisibleCamera,
+    .ISVisibleDynamicPVS = MAX_kISVisibleDynamicPVS,
+    .ISVisibleFPPMask = MAX_kISVisibleFPPMask,
+    .MainCameraTransform = MAX_kMainCameraTransform,
+    .MyPhysXData = MAX_kMyPhysXData,
+    .PhxNpeononogeo = MAX_kPhxNpeononogeo,
+    .GhgState = MAX_kGhgState,
+    .Knocked = MAX_kKnocked,
+    .BeingRescuredState = MAX_kBeingRescuredState,
+    .MatchPlayerDict = MAX_kMatchPlayerDict,
+    .DictEntries = MAX_kDictEntries,
+    .DictCount = MAX_kDictCount,
+    .Il2CppArrayMaxLength = MAX_kIl2CppArrayMaxLength,
+    .Il2CppArrayItems = MAX_kIl2CppArrayItems,
+    .DictEntryStrideBytePlayer = MAX_kDictEntryStrideBytePlayer,
+    .DictEntryValueOffByte = MAX_kDictEntryValueOffByte,
+    .TransformInner = MAX_kTransformInner,
+    .TransformMatrix = MAX_kTransformMatrix,
+    .TransformIndex = MAX_kTransformIndex,
+    .MatrixList = MAX_kMatrixList,
+    .MatrixIndices = MAX_kMatrixIndices,
+    .Nickname = MAX_kNickname,
+    .StringFirstChar = MAX_kStringFirstChar,
+    .ActiveWeapon = MAX_kActiveWeapon,
+    .WeaponID = MAX_kWeaponID,
+    .WeaponCategory = MAX_kWeaponCategory,
+    .WeaponHolder = MAX_kWeaponHolder,
+    .HolderActiveWeapon = MAX_kHolderActiveWeapon,
+    .WeaponRepItem = MAX_kWeaponRepItem,
+    .SwitchWeaponTime = MAX_kSwitchWeaponTime,
+    .PreSwitchWeaponTime = MAX_kPreSwitchWeaponTime,
+    .PostSwitchWeaponTime = MAX_kPostSwitchWeaponTime,
+    .NicknameDisplay = MAX_kNicknameDisplay,
+    .HitObjectInfo = MAX_kHitObjectInfo,
+    .HitObjectInfoAlt = MAX_kHitObjectInfoAlt,
+    .HitObjectDir = MAX_kHitObjectDir,
+    .HitObjectOrigin = MAX_kHitObjectOrigin,
+    .FollowCameraObj = MAX_kFollowCameraObj,
+    .FollowCameraDistance = MAX_kFollowCameraDistance,
+    .VehicleIAmIn = MAX_kVehicleIAmIn,
+    .LevelStropIAmOn = MAX_kLevelStropIAmOn,
+    .RootNode = MAX_kRootNode,
+    .PlayerTransform = MAX_kPlayerTransform,
+    .LastAimingTargetFromWeapon = MAX_kLastAimingTargetFromWeapon,
+    .BaseGameUIScene = MAX_kBaseGameUIScene,
+    .UIInGameScenePrepareCtrl = MAX_kUIInGameScenePrepareCtrl,
+    .UIInGameSceneQuickUseMedkit = MAX_kUIInGameSceneQuickUseMedkit,
+    .PrepTimerStartTime = MAX_kPrepTimerStartTime,
+    .PrepTimerTotalTime = MAX_kPrepTimerTotalTime,
+    .PrepTimerContextType = MAX_kPrepTimerContextType,
+    .PrepTimerStage1Time = MAX_kPrepTimerStage1Time,
+    .PrepTimerIsFinished = MAX_kPrepTimerIsFinished,
+    .PrepTimerProgressSpeed = MAX_kPrepTimerProgressSpeed,
+    .PrepTimerProgressRate = MAX_kPrepTimerProgressRate,
+    .PlayerPrepTimerType = MAX_kPlayerPrepTimerType,
+    .PlayerNetPrepDuration = MAX_kPlayerNetPrepDuration,
+    .PlayerNetPrepType = MAX_kPlayerNetPrepType,
+    .PlayerNetPrepFloatA = MAX_kPlayerNetPrepFloatA,
+    .PlayerNetPrepFloatB = MAX_kPlayerNetPrepFloatB,
+    .PlayerIsCuring = MAX_kPlayerIsCuring,
+    .PlayerIsPreparing = MAX_kPlayerIsPreparing,
+    .PlayerIsEating = MAX_kPlayerIsEating,
+    .PlayerIsRepairing = MAX_kPlayerIsRepairing,
+    .PlayerNetPrepFloatC = MAX_kPlayerNetPrepFloatC,
+    .PlayerNetPrepFloatD = MAX_kPlayerNetPrepFloatD,
+    .WeaponConsumableCsv = MAX_kWeaponConsumableCsv,
+    .WeaponConsumableCsvFloatA = MAX_kWeaponConsumableCsvFloatA,
+    .WeaponConsumableCsvFloatB = MAX_kWeaponConsumableCsvFloatB,
+    .WeaponConsumableCsvFloatC = MAX_kWeaponConsumableCsvFloatC,
+    .WeaponRepairRepItem = MAX_kWeaponRepairRepItem,
+    .WeaponFirstAidRepItem = MAX_kWeaponFirstAidRepItem,
+    .WeaponInhalerRepItem = MAX_kWeaponInhalerRepItem,
+    .UGCFirstAidDuration = MAX_kUGCFirstAidDuration,
+    .UGCFirstAidPretime = MAX_kUGCFirstAidPretime,
+    .UGCRepairPreTime = MAX_kUGCRepairPreTime,
+    .RepFireInterval = MAX_kRepFireInterval,
+    .RepRepeatFireInterval = MAX_kRepRepeatFireInterval,
+    .RepScatterNum = MAX_kRepScatterNum,
+    .RepScatterMax = MAX_kRepScatterMax,
+    .RepScatterSpeed = MAX_kRepScatterSpeed,
+    .RepScatterRecoverSpeed = MAX_kRepScatterRecoverSpeed,
+    .RepScatterMove = MAX_kRepScatterMove,
+    .AttrsBuffWeaponScatterScale = MAX_kAttrsBuffWeaponScatterScale,
+    .AttrsBuffEcaWeaponScatterScale = MAX_kAttrsBuffEcaWeaponScatterScale,
+    .AttrsBuffEcaIgnoreWeaponScatter = MAX_kAttrsBuffEcaIgnoreWeaponScatter,
+    .AttrsReloadNoConsumeAmmo = MAX_kAttrsReloadNoConsumeAmmo,
+    .AttrsShootNoReload = MAX_kAttrsShootNoReload,
+    .AttrsFireIntervalScale = MAX_kAttrsFireIntervalScale,
+    .AttrsFireIntervalScaleTwo = MAX_kAttrsFireIntervalScaleTwo,
+    .AttrsFireIntervalScaleBuffECA = MAX_kAttrsFireIntervalScaleBuffECA,
+    .ScaleAccumA = MAX_kScaleAccumA,
+    .ScaleAccumB = MAX_kScaleAccumB,
+    .ScaleAccumC = MAX_kScaleAccumC,
+    .ScaleAccumD = MAX_kScaleAccumD,
+    .ScaleAccumE = MAX_kScaleAccumE,
+    .SafeRefHashSet = MAX_kSafeRefHashSet,
+    .HashSetBuckets = MAX_kHashSetBuckets,
+    .HashSetSlots = MAX_kHashSetSlots,
+    .HashSetCount = MAX_kHashSetCount,
+    .HashSetLastIndex = MAX_kHashSetLastIndex,
+    .HashSetFreeList = MAX_kHashSetFreeList,
+    .FppGameModeEnable = MAX_kFppGameModeEnable,
+    .FppRecoil = MAX_kFppRecoil,
+    .FppVibrateRotate = MAX_kFppVibrateRotate,
+    .FppVibrateRotateSpeed = MAX_kFppVibrateRotateSpeed,
+    .FppRecoilYCycleTime = MAX_kFppRecoilYCycleTime,
+    .FppRecoilZCycleTime = MAX_kFppRecoilZCycleTime,
+    .FppRecoilYFactor = MAX_kFppRecoilYFactor,
+    .FppRecoilZFactor = MAX_kFppRecoilZFactor,
+    .FppRecoilBackwardX = MAX_kFppRecoilBackwardX,
+    .FppRecoilBackwardZ = MAX_kFppRecoilBackwardZ,
+    .FppRecoilBackwardSpeed = MAX_kFppRecoilBackwardSpeed,
+    .FppCameraMaxfireRotateAngle = MAX_kFppCameraMaxfireRotateAngle,
+    .FppCameraFireRotateTime = MAX_kFppCameraFireRotateTime,
+    .RuntimeWeapon = MAX_kRuntimeWeapon,
+};
 
-static uint64_t ResolveAimAssistStatics(void) {
-    if (Moudule_Base == 0 || Moudule_Base == (uint64_t)-1) return 0;
-    uint64_t typeInfo = ReadAddr<uint64_t>(Moudule_Base + kAimAssistTypeInfo);
-    if (!isVaildPtr(typeInfo)) return 0;
-    uint64_t statics = ReadAddr<uint64_t>(typeInfo + kTypeInfoStatics);
-    if (!isVaildPtr(statics)) {
-        const uint64_t offs[] = {0xB8, 0xB0, 0xC0, 0xA8};
-        for (size_t i = 0; i < 4 && !isVaildPtr(statics); i++) {
-            statics = ReadAddr<uint64_t>(typeInfo + offs[i]);
+static const GameOffsets *gActiveOffsets = &kOffsetsFF;
+static bool gIsMax = false;
+
+static bool GameIdIsMax(NSString *gameId) {
+    if (![gameId isKindOfClass:[NSString class]]) return false;
+    NSString *normalized = gameId.lowercaseString;
+    return [normalized isEqualToString:kGameIdFFMax] ||
+           [normalized isEqualToString:@"max"] ||
+           [normalized isEqualToString:@"freefiremax"];
+}
+
+NSString *GameTargetSelectedId(void) {
+    id raw = AppSettingsObjectForKey(kSelectedGameIdKey);
+    if ([raw isKindOfClass:[NSString class]] && [(NSString *)raw length] > 0) {
+        return GameIdIsMax((NSString *)raw) ? kGameIdFFMax : kGameIdFF;
+    }
+    return kGameIdFF;
+}
+
+void GameTargetSetSelectedId(NSString *gameId) {
+    NSString *resolved = GameIdIsMax(gameId) ? kGameIdFFMax : kGameIdFF;
+    AppSettingsSetObject(kSelectedGameIdKey, resolved);
+    GameOffsetsReload();
+}
+
+void GameOffsetsReload(void) {
+    gIsMax = GameIdIsMax(GameTargetSelectedId());
+    gActiveOffsets = gIsMax ? &kOffsetsFFMax : &kOffsetsFF;
+}
+
+const GameOffsets *GameOffsetsCurrent(void) {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        GameOffsetsReload();
+    });
+    if (!gActiveOffsets) {
+        gActiveOffsets = &kOffsetsFF;
+    }
+    return gActiveOffsets;
+}
+
+bool GameTargetIsMax(void) {
+    (void)GameOffsetsCurrent();
+    return gIsMax;
+}
+
+const char *GameTargetProcessName(void) {
+    return GameTargetIsMax() ? "FreeFireMAX" : "FreeFire";
+}
+
+// Jailed IPA path: kernel-rw provider instead of task_for_pid.
+// DSMemory handles attach + module base + reads, all through kexploit.
+#import "../DSMemory.h"
+#import "pid.h"
+
+int GameTargetProcessPid(void) {
+    if (ds_attached()) {
+        pid_t p = ds_pid();
+        if (p > 0) return p;
+    }
+    const char *pName = GameTargetProcessName();
+    pid_t sysctlPid = GetGameProcesspidExact(pName);
+    if (sysctlPid > 0) {
+        static pid_t s_lastLogPid = -1;
+        if (sysctlPid != s_lastLogPid) {
+            s_lastLogPid = sysctlPid;
+            NSLog(@"[GameOffsets] Game '%s' detected via sysctl: PID=%d", pName, sysctlPid);
         }
     }
-    return isVaildPtr(statics) ? statics : 0;
+    return sysctlPid;
 }
 
-static void SoftZeroAimAssistStrength(void) {
-    uint64_t statics = ResolveAimAssistStatics();
-    if (!statics) return;
-
-    float a = ReadAddr<float>(statics + kAaStaticKnolgmjlcef);
-    float b = ReadAddr<float>(statics + kAaStaticNfkcllpalej);
-    // Save first non-zero values we see in a disable session.
-    if (!g_aaStaticsSaved) {
-        if (a > 0.001f && a < 100.0f) g_savedAaStaticA = a;
-        if (b > 0.001f && b < 100.0f) g_savedAaStaticB = b;
-        // Fallback if already zeroed by a previous session without restore.
-        if (g_savedAaStaticA <= 0.001f) g_savedAaStaticA = 1.0f;
-        if (g_savedAaStaticB <= 0.001f) g_savedAaStaticB = 1.0f;
-        g_aaStaticsSaved = true;
-    }
-
-    WriteAddr<float>(statics + kAaStaticKnolgmjlcef, 0.0f);
-    WriteAddr<float>(statics + kAaStaticNfkcllpalej, 0.0f);
-    g_aaStaticsZeroed = true;
+bool GameTargetIsRunning(void) {
+    if (ds_attached()) return true;
+    return (GameTargetProcessPid() > 0);
 }
 
-static void SoftRestoreAimAssistStrength(void) {
-    if (!g_aaStaticsZeroed && !g_aaStaticsSaved) return;
-    uint64_t statics = ResolveAimAssistStatics();
-    if (!statics) return;
-
-    float a = g_aaStaticsSaved ? g_savedAaStaticA : 1.0f;
-    float b = g_aaStaticsSaved ? g_savedAaStaticB : 1.0f;
-    if (a <= 0.001f || a > 100.0f) a = 1.0f;
-    if (b <= 0.001f || b > 100.0f) b = 1.0f;
-    WriteAddr<float>(statics + kAaStaticKnolgmjlcef, a);
-    WriteAddr<float>(statics + kAaStaticNfkcllpalej, b);
-    g_aaStaticsZeroed = false;
-    g_aaStaticsSaved = false;
-}
-
-// Player.FGEAKHHPKCC (EAimAssist) dump: AllOn=0, OffOnSighting=1, AllOff=2.
-// Writing the enum kills default chest magnet without stomping m_AimAssist object layout
-// (object float spray crashed at 0x100000000). Keep pointers non-null.
-static int32_t g_savedEAimAssistMode = kEAimAssistAllOn;
-static bool g_eAimAssistModeSaved = false;
-static bool g_defaultAADisabled = false;
-
-void DisableGameDefaultAimAssist(uint64_t localPlayerPawn, bool disable) {
-    if (!isVaildPtr(localPlayerPawn)) return;
-
-    if (disable) {
-        // Kill vanilla AA fully while custom aimbot/assist is on (wall ON or OFF):
-        // 1) zero magnet static scales
-        // 2) force EAimAssist AllOff so fire-stick / ADS chest magnet cannot re-pull
-        // Wall-OFF LOS is geometric (cover raycast), NOT AA-list dependent — safe to AllOff.
-        SoftZeroAimAssistStrength();
-
-        int32_t cur = ReadAddr<int32_t>(localPlayerPawn + kEAimAssistMode);
-        if (!g_eAimAssistModeSaved) {
-            if (cur == kEAimAssistAllOn || cur == kEAimAssistOffOnSighting || cur == kEAimAssistAllOff) {
-                g_savedEAimAssistMode = cur;
-            } else {
-                g_savedEAimAssistMode = kEAimAssistAllOn;
+uintptr_t GameTargetModuleBase(void) {
+    if (!ds_attached()) {
+        NSLog(@"[GameOffsets] GameTargetModuleBase: Attaching to '%s' via ds_attach()...", GameTargetProcessName());
+        int ret = ds_attach();
+        if (ret != 0) {
+            static int s_failCount = 0;
+            if (++s_failCount % 30 == 1) {
+                NSLog(@"[GameOffsets] ds_attach() failed: code %d", ret);
             }
-            g_eAimAssistModeSaved = true;
+            return 0;
         }
-        if (cur != kEAimAssistAllOff) {
-            WriteAddr<int32_t>(localPlayerPawn + kEAimAssistMode, kEAimAssistAllOff);
-        }
-        g_defaultAADisabled = true;
-        return;
+        NSLog(@"[GameOffsets] ds_attach() SUCCESS: PID=%d, base=0x%llx", ds_pid(), ds_base());
     }
-
-    // Restore when custom aimbot/assist is fully off.
-    if (g_defaultAADisabled || g_aaStaticsZeroed || g_aaStaticsSaved) {
-        SoftRestoreAimAssistStrength();
-        if (g_eAimAssistModeSaved) {
-            int32_t restore = g_savedEAimAssistMode;
-            if (restore != kEAimAssistAllOn && restore != kEAimAssistOffOnSighting && restore != kEAimAssistAllOff) {
-                restore = kEAimAssistAllOn;
-            }
-            // Never restore AllOff as "original" when user turned custom aim off.
-            if (restore == kEAimAssistAllOff) restore = kEAimAssistAllOn;
-            WriteAddr<int32_t>(localPlayerPawn + kEAimAssistMode, restore);
-        }
-    }
-    g_defaultAADisabled = false;
-    g_eAimAssistModeSaved = false;
+    return (uintptr_t)ds_base();
 }
