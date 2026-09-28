@@ -306,7 +306,7 @@ static const CGFloat kMenuButtonSize = 56.0f;
     _startButton.alpha = 1.0;
 }
 
-#pragma mark - Build UI (tất cả trong 1 hàm)
+#pragma mark - Build UI
 
 - (void)buildUI {
     self.view.backgroundColor = MDThemeBg();
@@ -588,7 +588,7 @@ static const CGFloat kMenuButtonSize = 56.0f;
     [_authorizationButton addTarget:self action:@selector(retryAuthorization:) forControlEvents:UIControlEventTouchUpInside];
     [_extraCard addSubview:_authorizationButton];
 
-    // ===== Nhãn phụ trong AIM/MOVE/CAM (add 1 lần) =====
+    // ===== Nhãn phụ trong AIM/MOVE/CAM =====
     [self addAimMoveCamLabels];
 }
 
@@ -769,7 +769,7 @@ static const CGFloat kMenuButtonSize = 56.0f;
     ESPPrefsSetBool(@"AutoVarCleanBeforeHUD", sender.on);
 }
 
-#pragma mark - Layout (tất cả trong 1 hàm)
+#pragma mark - Layout
 
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
@@ -808,7 +808,7 @@ static const CGFloat kMenuButtonSize = 56.0f;
         CGFloat rowH = 40.0f;
         CGFloat headerH = 40.0f;
         NSInteger subRows = 6;
-        CGFloat cardH = headerH + rowH + rowH * subRows + 10.0f;
+        CGFloat cardH = headerH + rowH * subRows + 10.0f;
         _espCard.frame = CGRectMake(xPad, y, cardW, cardH);
 
         _espTitleLabel.frame = CGRectMake(pad, 10, 200, 24);
@@ -823,14 +823,14 @@ static const CGFloat kMenuButtonSize = 56.0f;
         NSArray *sws = @[_espBoxSwitch, _espBoneSwitch, _espNameSwitch, _espDistSwitch,
                          _espLineSwitch, _espHealthSwitch, _espCountSwitch, _espWeaponSwitch,
                          _espAlert360Switch, _espAlertNumSwitch, _espCheckVisSwitch, _espBotSwitch];
-        CGFloat startY = headerH + rowH;
+        CGFloat startY = headerH;
         for (NSInteger i = 0; i < labels.count; i++) {
             NSInteger row = i / 2;
             NSInteger col = i % 2;
             CGFloat cx = (col == 0) ? colLeftX : colRightX;
             CGFloat cy = startY + rowH * row;
 
-            UILabel *lbl = [self viewWithTag:1000 + i];
+            UILabel *lbl = [_espCard viewWithTag:1000 + i];
             if (!lbl) {
                 lbl = [self makeSubLabel:labels[i]];
                 lbl.tag = 1000 + i;
@@ -853,7 +853,7 @@ static const CGFloat kMenuButtonSize = 56.0f;
         _aimCard.frame = CGRectMake(xPad, y, cardW, cardH);
 
         CGFloat cy = 8.0f;
-        UILabel *aimbotLbl = [self viewWithTag:2000];
+        UILabel *aimbotLbl = [_aimCard viewWithTag:2000];
         aimbotLbl.frame = CGRectMake(pad, cy + 8, 200, 24);
         _aimbotSwitch.frame = CGRectMake(cardW - swW - pad, cy + 4, swW, 31);
         cy += rowH;
@@ -864,22 +864,22 @@ static const CGFloat kMenuButtonSize = 56.0f;
         _triggerSegment.frame = CGRectMake(pad, cy + 4, cardW - pad * 2, 32);
         cy += rowH;
 
-        UILabel *silentLbl = [self viewWithTag:2001];
+        UILabel *silentLbl = [_aimCard viewWithTag:2001];
         silentLbl.frame = CGRectMake(pad, cy + 8, 100, 24);
         _aimSilentSwitch.frame = CGRectMake(pad + 90, cy + 4, swW, 31);
 
-        UILabel *assistLbl = [self viewWithTag:2002];
+        UILabel *assistLbl = [_aimCard viewWithTag:2002];
         assistLbl.frame = CGRectMake(cardW / 2.0f + 8, cy + 8, 100, 24);
         _aimAssistSwitch.frame = CGRectMake(cardW / 2.0f + 88, cy + 4, swW, 31);
         cy += rowH;
 
-        UILabel *fovLbl = [self viewWithTag:2003];
+        UILabel *fovLbl = [_aimCard viewWithTag:2003];
         fovLbl.frame = CGRectMake(pad, cy + 8, 50, 24);
         _aimFovSlider.frame = CGRectMake(pad + 54, cy + 6, cardW - pad * 2 - 54 - 60, 30);
         _aimFovValueLabel.frame = CGRectMake(cardW - pad - 56, cy + 8, 56, 24);
         cy += rowH;
 
-        UILabel *distLbl = [self viewWithTag:2004];
+        UILabel *distLbl = [_aimCard viewWithTag:2004];
         distLbl.frame = CGRectMake(pad, cy + 8, 50, 24);
         _aimDistanceSlider.frame = CGRectMake(pad + 54, cy + 6, cardW - pad * 2 - 54 - 60, 30);
         _aimDistanceValueLabel.frame = CGRectMake(cardW - pad - 56, cy + 8, 56, 24);
@@ -896,12 +896,12 @@ static const CGFloat kMenuButtonSize = 56.0f;
         _moveCard.frame = CGRectMake(xPad, y, cardW, cardH);
 
         CGFloat cy = 8.0f;
-        UILabel *brutalLbl = [self viewWithTag:3000];
+        UILabel *brutalLbl = [_moveCard viewWithTag:3000];
         brutalLbl.frame = CGRectMake(pad, cy + 8, 250, 24);
         _brutalSwitch.frame = CGRectMake(cardW - swW - pad, cy + 4, swW, 31);
         cy += rowH;
 
-        UILabel *speedLbl = [self viewWithTag:3001];
+        UILabel *speedLbl = [_moveCard viewWithTag:3001];
         speedLbl.frame = CGRectMake(pad, cy + 8, 200, 24);
         _speedSwitch.frame = CGRectMake(cardW - swW - pad, cy + 4, swW, 31);
         cy += rowH;
@@ -910,7 +910,7 @@ static const CGFloat kMenuButtonSize = 56.0f;
         _speedValueLabel.frame = CGRectMake(cardW - pad - 56, cy + 8, 56, 24);
         cy += rowH;
 
-        UILabel *frLbl = [self viewWithTag:3002];
+        UILabel *frLbl = [_moveCard viewWithTag:3002];
         frLbl.frame = CGRectMake(pad, cy + 8, 200, 24);
         _fastReloadSwitch.frame = CGRectMake(cardW - swW - pad, cy + 4, swW, 31);
         cy += rowH;
