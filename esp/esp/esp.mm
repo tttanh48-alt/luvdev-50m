@@ -2683,11 +2683,15 @@ static void ESPDiagHeartbeat(void) {
         // A dispatch_source timer on the main queue keeps firing while the
         // process is alive (audio KeepAlive), so the overlay keeps rendering
         // over the game.
-        self.frameTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
+            self.frameTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
         if (self.frameTimer) {
+            // 22ms (~45fps) instead of 16ms (~60fps): the read pass is 8-12ms,
+            // so a 16ms interval leaves zero headroom and the main thread
+            // collides with the previous tick every frame. 22ms lets the read
+            // finish and cuts CPU load about a third.
             dispatch_source_set_timer(self.frameTimer,
-                                      dispatch_time(DISPATCH_TIME_NOW, 16 * NSEC_PER_MSEC),
-                                      16 * NSEC_PER_MSEC,
+                                      dispatch_time(DISPATCH_TIME_NOW, 22 * NSEC_PER_MSEC),
+                                      22 * NSEC_PER_MSEC,
                                       2 * NSEC_PER_MSEC);
             __weak ESP_View *wself = self;
             dispatch_source_set_event_handler(self.frameTimer, ^{
@@ -2698,7 +2702,6 @@ static void ESPDiagHeartbeat(void) {
     }
     return self;
 }
-
 - (void)layoutSubviews {
     [super layoutSubviews];
     _secureTextField.frame = self.bounds;
