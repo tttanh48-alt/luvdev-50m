@@ -6,35 +6,35 @@
 #import "esp.h"
 #import "GameOffsets.h"
 #import "roothide/varCleanController.h"
-#import "MDTheme.h"
 #import "AppSettingsViewController.h"
 #import "../KernelBoot.h"
 
-// C function-pointer log sink — defined after class extension (needs selector)
+// NOTE: MDTheme.h is deliberately NOT imported. The previous build still
+// called MDThemeLoadFromPrefs() in viewDidLoad, and that function rewrote
+// the window appearance with values from prefs. When the user's stored
+// theme was light, it overrode every local colour set by applyTheme, which
+// is why the screen stayed white no matter what palette this file used.
+// Everything below uses a local palette and never touches prefs.
+
 static HomeViewController *g_activeLogVC = nil;
 static void HomeVCBootLogSink(NSString *line);
 
 #import <QuartzCore/QuartzCore.h>
 #import <SafariServices/SafariServices.h>
 
-// Icon menu cho iPad (không bị kẹt nửa màn hình)
 static const CGFloat kMenuButtonSize = 56.0f;
 
-#pragma mark - VN TOOL white theme
-// All colours are local to this file. The old MDTheme*() functions read
-// from a shared pref and were rendering dark cards on light devices; the
-// user asked for a white app, so the palette is hardcoded here and does
-// not depend on MDThemeLoadFromPrefs() being called first.
-static UIColor *VNBg(void)     { return [UIColor colorWithWhite:0.98 alpha:1.0]; }
-static UIColor *VNCard(void)   { return [UIColor whiteColor]; }
-static UIColor *VNLine(void)   { return [UIColor colorWithWhite:0.90 alpha:1.0]; }
-static UIColor *VNText(void)   { return [UIColor colorWithWhite:0.08 alpha:1.0]; }
-static UIColor *VNMuted(void)  { return [UIColor colorWithWhite:0.55 alpha:1.0]; }
-static UIColor *VNAccent(void) { return [UIColor colorWithRed:0.13 green:0.72 blue:0.35 alpha:1.0]; }
-static UIColor *VNBlue(void)   { return [UIColor colorWithRed:0.00 green:0.48 blue:1.00 alpha:1.0]; }
-static UIColor *VNOrange(void) { return [UIColor colorWithRed:1.00 green:0.58 blue:0.00 alpha:1.0]; }
-static UIColor *VNRed(void)    { return [UIColor colorWithRed:1.00 green:0.23 blue:0.19 alpha:1.0]; }
-static UIColor *VNPanel2(void) { return [UIColor colorWithWhite:0.94 alpha:1.0]; }
+#pragma mark - VN TOOL dark navy theme (GitHub-style)
+static UIColor *VNBg(void)     { return [UIColor colorWithRed:0.043 green:0.059 blue:0.078 alpha:1.0]; } // #0B0F14
+static UIColor *VNCard(void)   { return [UIColor colorWithRed:0.086 green:0.106 blue:0.133 alpha:1.0]; } // #161B22
+static UIColor *VNLine(void)   { return [UIColor colorWithRed:0.188 green:0.212 blue:0.239 alpha:1.0]; } // #30363D
+static UIColor *VNText(void)   { return [UIColor colorWithRed:0.902 green:0.929 blue:0.953 alpha:1.0]; } // #E6EDF3
+static UIColor *VNMuted(void)  { return [UIColor colorWithRed:0.545 green:0.580 blue:0.620 alpha:1.0]; } // #8B949E
+static UIColor *VNAccent(void) { return [UIColor colorWithRed:0.247 green:0.725 blue:0.314 alpha:1.0]; } // #3FB950
+static UIColor *VNBlue(void)   { return [UIColor colorWithRed:0.345 green:0.651 blue:1.000 alpha:1.0]; } // #58A6FF
+static UIColor *VNOrange(void) { return [UIColor colorWithRed:0.941 green:0.533 blue:0.243 alpha:1.0]; } // #F0883E
+static UIColor *VNRed(void)    { return [UIColor colorWithRed:0.973 green:0.318 blue:0.286 alpha:1.0]; } // #F85149
+static UIColor *VNPanel2(void) { return [UIColor colorWithRed:0.129 green:0.149 blue:0.176 alpha:1.0]; } // #21262D
 
 static UIView *VNMakeCard(void) {
     UIView *v = [[UIView alloc] init];
@@ -42,10 +42,6 @@ static UIView *VNMakeCard(void) {
     v.layer.cornerRadius = 14.0f;
     v.layer.borderWidth = 1.0f;
     v.layer.borderColor = VNLine().CGColor;
-    v.layer.shadowColor = [UIColor blackColor].CGColor;
-    v.layer.shadowOpacity = 0.05f;
-    v.layer.shadowRadius = 6.0f;
-    v.layer.shadowOffset = CGSizeMake(0, 2);
     return v;
 }
 
@@ -57,6 +53,7 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
 @property (nonatomic, strong) UIScrollView *scrollView;
 @property (nonatomic, strong) UIView *contentView;
 
+@property (nonatomic, strong) UIButton *closeBtn;
 @property (nonatomic, strong) UILabel *titleLabel;
 
 @property (nonatomic, strong) UIView *controlCard;
@@ -75,7 +72,6 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
 @property (nonatomic, strong) UISlider *camSlider;
 @property (nonatomic, strong) UILabel *camValueLabel;
 
-// Aimbot tuning card (new)
 @property (nonatomic, strong) UIView *aimCard;
 @property (nonatomic, strong) UILabel *fovLabel;
 @property (nonatomic, strong) UISlider *fovSlider;
@@ -134,10 +130,15 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
 
 #pragma mark - Lifecycle
 
+- (UIStatusBarStyle)preferredStatusBarStyle {
+    return UIStatusBarStyleLightContent;
+}
+
 - (void)viewDidLoad {
     [super viewDidLoad];
 
-    MDThemeLoadFromPrefs();
+    // Intentionally no MDThemeLoadFromPrefs() here. It used to rewrite the
+    // window appearance from prefs and undo every colour set below.
     [self buildUI];
     _gameMissingStreak = 0;
     _pendingHUDEnableUntil = 0;
@@ -153,16 +154,35 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
                                              selector:@selector(appBecameActive)
                                                  name:UIApplicationDidBecomeActiveNotification
                                                object:nil];
-    [[NSNotificationCenter defaultCenter] addObserver:self
-                                             selector:@selector(applyTheme)
-                                                 name:MDThemeDidChangeNotification
-                                               object:nil];
 
     [self startPollingGameState];
 }
 
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    // Re-assert the dark theme every time we come back from the game.
+    [self applyTheme];
+    // Dark the surrounding chrome if we are inside a nav/tab controller.
+    if (self.navigationController) {
+        self.navigationController.navigationBar.barStyle = UIBarStyleBlack;
+        self.navigationController.navigationBar.translucent = NO;
+        self.navigationController.navigationBar.barTintColor = VNBg();
+        self.navigationController.navigationBar.tintColor = VNText();
+        self.navigationController.view.backgroundColor = VNBg();
+    }
+    if (self.tabBarController) {
+        self.tabBarController.tabBar.barStyle = UIBarStyleBlack;
+        self.tabBarController.tabBar.translucent = NO;
+        self.tabBarController.tabBar.barTintColor = VNCard();
+        self.tabBarController.tabBar.tintColor = VNAccent();
+        self.tabBarController.tabBar.unselectedItemTintColor = VNMuted();
+        self.tabBarController.view.backgroundColor = VNBg();
+    }
+}
+
 - (void)viewDidAppear:(BOOL)animated {
     [super viewDidAppear:animated];
+    [self setNeedsStatusBarAppearanceUpdate];
 }
 
 - (void)dealloc {
@@ -191,8 +211,49 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     [self presentViewController:nav animated:YES completion:nil];
 }
 
-// Local white theme. The original called into MDTheme which loaded from
-// prefs and could return dark panels; this one is fixed.
+// Close button. The most reliable way to hide the config screen while
+// keeping the process alive is to bring Free Fire to the foreground —
+// iOS backgrounds this app automatically, KeepAlive audio prevents
+// suspension, and the offscreen ESP_View timer keeps mirroring to
+// SpringBoard. If the game is not installed / scheme does not resolve,
+// fall back to the private suspend selector, and if that is not present
+// either, exit(0) so at least the app disappears.
+- (void)closeAppTapped:(id)sender {
+    (void)sender;
+    UIApplication *app = [UIApplication sharedApplication];
+
+    // 1) Bring Free Fire to front (best path: game gets focus, we background).
+    NSString *bundleId = GameTargetIsMax() ? @"com.dts.freefiremax" : @"vn.vng.freefireth";
+    NSURL *url = [NSURL URLWithString:[NSString stringWithFormat:@"%@://", bundleId]];
+    if ([app canOpenURL:url]) {
+        [app openURL:url options:@{} completionHandler:nil];
+        return;
+    }
+    NSArray<NSString *> *fallbacks = GameTargetIsMax()
+        ? @[ @"freefiremax://", @"ffmax://" ]
+        : @[ @"freefireth://", @"freefire://" ];
+    for (NSString *scheme in fallbacks) {
+        NSURL *u = [NSURL URLWithString:scheme];
+        if ([app canOpenURL:u]) {
+            [app openURL:u options:@{} completionHandler:nil];
+            return;
+        }
+    }
+
+    // 2) Private suspend selector (backgrounds the app directly).
+    SEL sel = NSSelectorFromString(@"suspend");
+    if ([app respondsToSelector:sel]) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+        [app performSelector:sel];
+#pragma clang diagnostic pop
+        return;
+    }
+
+    // 3) Last resort — terminate. The user can relaunch.
+    exit(0);
+}
+
 - (void)applyTheme {
     self.view.backgroundColor = VNBg();
 
@@ -273,6 +334,8 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _trashBtn.backgroundColor = VNPanel2();
     _trashBtn.layer.borderColor = VNLine().CGColor;
     _trashBtn.tintColor = VNText();
+    _closeBtn.backgroundColor = VNRed();
+    _closeBtn.layer.borderColor = VNRed().CGColor;
 
     [self updateVersionSelectionUI];
     [self updateAuthorizationPresentation];
@@ -307,6 +370,19 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     b.tintColor = VNText();
     UIImage *img = [UIImage systemImageNamed:systemName];
     if (img) [b setImage:img forState:UIControlStateNormal];
+    return b;
+}
+
+// Standalone close button: text "✕" on a red background so it is clearly
+// visible against the dark cards and cannot be confused with the settings
+// or trash icon buttons.
+- (UIButton *)makeCloseButton {
+    UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
+    b.backgroundColor = VNRed();
+    b.layer.cornerRadius = 10.0f;
+    b.titleLabel.font = [UIFont systemFontOfSize:18 weight:UIFontWeightBold];
+    [b setTitle:@"✕" forState:UIControlStateNormal];
+    [b setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     return b;
 }
 
@@ -379,10 +455,19 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _scrollView = [[UIScrollView alloc] initWithFrame:CGRectZero];
     _scrollView.alwaysBounceVertical = YES;
     _scrollView.showsVerticalScrollIndicator = NO;
+    _scrollView.backgroundColor = VNBg();
     [self.view addSubview:_scrollView];
 
     _contentView = [[UIView alloc] initWithFrame:CGRectZero];
+    _contentView.backgroundColor = VNBg();
     [_scrollView addSubview:_contentView];
+
+    // Close button on the far left. Text-based (✕) rather than SF Symbol
+    // so it cannot silently render as an empty button on iOS versions
+    // where "xmark" is missing.
+    _closeBtn = [self makeCloseButton];
+    [_closeBtn addTarget:self action:@selector(closeAppTapped:) forControlEvents:UIControlEventTouchUpInside];
+    [self.view addSubview:_closeBtn];
 
     _settingsBtn = [self makeIconButton:@"gearshape.fill"];
     [_settingsBtn addTarget:self action:@selector(openSettings) forControlEvents:UIControlEventTouchUpInside];
@@ -406,7 +491,7 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _controlIconView.clipsToBounds = YES;
     _controlIconView.layer.cornerRadius = 12.0f;
     _controlIconView.image = [self imageNamedWebPOrPNG:@"ff"] ?: [UIImage imageNamed:@"logo"];
-    _controlIconView.backgroundColor = [UIColor colorWithWhite:0.9 alpha:1.0];
+    _controlIconView.backgroundColor = VNPanel2();
     [_controlCard addSubview:_controlIconView];
 
     _controlTitleLabel = [[UILabel alloc] initWithFrame:CGRectZero];
@@ -431,7 +516,7 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     [_startButton addTarget:self action:@selector(startButtonTapped:) forControlEvents:UIControlEventTouchUpInside];
     [_controlCard addSubview:_startButton];
 
-    // Quick toggles card
+    // Toggles card
     _togglesCard = [self makeCard];
     [_contentView addSubview:_togglesCard];
 
@@ -485,9 +570,7 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _camValueLabel.text = [NSString stringWithFormat:@"%.0f", _camSlider.value];
     [_togglesCard addSubview:_camValueLabel];
 
-    // ------------------------------------------------------------------
-    // Aimbot tuning card (NEW)
-    // ------------------------------------------------------------------
+    // Aimbot card
     _aimCard = [self makeCard];
     [_contentView addSubview:_aimCard];
 
@@ -527,6 +610,7 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     }
     if (@available(iOS 13.0, *)) {
         _triggerSegment.selectedSegmentTintColor = VNAccent();
+        _triggerSegment.backgroundColor = VNPanel2();
     }
     [_triggerSegment addTarget:self action:@selector(triggerSegmentChanged:) forControlEvents:UIControlEventValueChanged];
     [_aimCard addSubview:_triggerSegment];
@@ -546,6 +630,7 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     }
     if (@available(iOS 13.0, *)) {
         _aimPosSegment.selectedSegmentTintColor = VNAccent();
+        _aimPosSegment.backgroundColor = VNPanel2();
     }
     [_aimPosSegment addTarget:self action:@selector(aimPosSegmentChanged:) forControlEvents:UIControlEventValueChanged];
     [_aimCard addSubview:_aimPosSegment];
@@ -562,7 +647,7 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     [_aimBehindWallSwitch addTarget:self action:@selector(aimBehindWallSwitchChanged:) forControlEvents:UIControlEventValueChanged];
     [_aimCard addSubview:_aimBehindWallSwitch];
 
-    // Boot log card
+    // Log card
     _logCard = [self makeCard];
     [_contentView addSubview:_logCard];
 
@@ -570,8 +655,10 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _logTextView.editable = NO;
     _logTextView.scrollEnabled = YES;
     _logTextView.showsHorizontalScrollIndicator = NO;
-    _logTextView.backgroundColor = [UIColor colorWithWhite:0.08 alpha:1.0];
+    _logTextView.backgroundColor = [UIColor colorWithRed:0.02 green:0.04 blue:0.03 alpha:1.0];
     _logTextView.layer.cornerRadius = 10.0f;
+    _logTextView.layer.borderWidth = 1.0f;
+    _logTextView.layer.borderColor = VNLine().CGColor;
     _logTextView.font = [UIFont monospacedSystemFontOfSize:10 weight:UIFontWeightRegular];
     _logTextView.textColor = [UIColor colorWithRed:0.55 green:0.95 blue:0.6 alpha:1.0];
     _logTextView.text = @"[VN TOOL] ready.\nPress Bắt đầu to boot kernel.";
@@ -721,6 +808,8 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _scrollView.frame = self.view.bounds;
 
     CGFloat gear = 36.0f;
+    // Row 1: [X close] ... [trash] [gear]
+    _closeBtn.frame = CGRectMake(insets.left + 16, insets.top + 8, gear, gear);
     _settingsBtn.frame = CGRectMake(width - insets.right - 16 - gear, insets.top + 8, gear, gear);
     _trashBtn.frame = CGRectMake(CGRectGetMinX(_settingsBtn.frame) - 10 - gear, insets.top + 8, gear, gear);
 
@@ -729,10 +818,14 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     CGFloat cardW = contentW - xPad * 2.0f;
     CGFloat y = insets.top + 52.0f;
 
-    _titleLabel.frame = CGRectMake(xPad + 6, y, cardW - 12 - 80, 40);
+    // Title sits between the close button and the two icon buttons.
+    CGFloat titleX = CGRectGetMaxX(_closeBtn.frame) + 12;
+    CGFloat titleRight = CGRectGetMinX(_trashBtn.frame) - 12;
+    CGFloat titleW = titleRight - titleX;
+    if (titleW < 80) titleW = 80;
+    _titleLabel.frame = CGRectMake(titleX, y, titleW, 40);
     y = CGRectGetMaxY(_titleLabel.frame) + 14;
 
-    // Control card
     CGFloat controlH = 86.0f;
     _controlCard.frame = CGRectMake(xPad, y, cardW, controlH);
     CGFloat iconSize = MIN(kMenuButtonSize, MIN(cardW * 0.42f, controlH * 0.85f));
@@ -745,7 +838,6 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _controlSubtitleLabel.frame = CGRectMake(textX, 44, textW, 28);
     y = CGRectGetMaxY(_controlCard.frame) + 12;
 
-    // Toggles card
     CGFloat togglesH = 176.0f;
     _togglesCard.frame = CGRectMake(xPad, y, cardW, togglesH);
     _aimbotLabel.frame = CGRectMake(16, 14, 200, 24);
@@ -758,7 +850,6 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _camValueLabel.frame = CGRectMake(cardW - 64, 130, 48, 24);
     y = CGRectGetMaxY(_togglesCard.frame) + 12;
 
-    // Aimbot tuning card
     CGFloat aimH = 254.0f;
     _aimCard.frame = CGRectMake(xPad, y, cardW, aimH);
     _fovLabel.frame = CGRectMake(16, 14, 120, 20);
@@ -772,7 +863,6 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _aimBehindWallSwitch.frame = CGRectMake(cardW - 68, 210, 51, 31);
     y = CGRectGetMaxY(_aimCard.frame) + 12;
 
-    // Boot log card
     CGFloat logH = 210.0f;
     _logCard.frame = CGRectMake(xPad, y, cardW, logH);
     _logTextView.frame = CGRectMake(10, 8, cardW - 20, logH - 16);
@@ -794,7 +884,6 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _ffNameLabel.frame = CGRectMake(8, 90, versionW - 16, 24);
     y = CGRectGetMaxY(_ffMaxCard.frame) + 14;
 
-    // Status
     CGFloat statusH = 64.0f;
     _statusCard.frame = CGRectMake(xPad, y, cardW, statusH);
     _statusDot.frame = CGRectMake(16, 27, 10, 10);
@@ -802,7 +891,6 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _statusLabel.frame = CGRectMake(36, 18, cardW - 112 - 44, 28);
     y = CGRectGetMaxY(_statusCard.frame) + 12;
 
-    // License / auth
     CGFloat halfW = (cardW - gap) * 0.5f;
     CGFloat halfH = 92.0f;
     _licenseCard.frame = CGRectMake(xPad, y, halfW, halfH);
@@ -813,7 +901,6 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _authValueLabel.frame = CGRectMake(14, 40, halfW - 28, 36);
     y = CGRectGetMaxY(_licenseCard.frame) + 12;
 
-    // Support
     CGFloat supportH = 72.0f;
     _supportCard.frame = CGRectMake(xPad, y, cardW, supportH);
     _joinButton.frame = CGRectMake(cardW - 92, 19, 78, 34);
@@ -821,7 +908,6 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _supportSubtitleLabel.frame = CGRectMake(16, 40, cardW - 120, 18);
     y = CGRectGetMaxY(_supportCard.frame) + 12;
 
-    // Extra
     CGFloat extraH = 96.0f;
     _extraCard.frame = CGRectMake(xPad, y, cardW, extraH);
     _autoCleanLabel.frame = CGRectMake(16, 16, cardW - 90, 22);
@@ -866,6 +952,7 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
 
 - (void)appBecameActive {
     GameOffsetsReload();
+    [self applyTheme];
     [self updateVersionSelectionUI];
     [self refreshHUDState];
 }
@@ -916,14 +1003,32 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     ESPPrefsSetFloatLive(@"Fov", v);
 }
 
+// Trigger / AimPos write both key variants. ESPPrefs appends "_Lite" when
+// the menu layout is Lite; if the layout is Pro it writes the plain key.
+// The read path in esp.mm goes through the same ResolveKey, so a mismatch
+// only happens when the layout changes between a write and a read, or when
+// the value was written before a layout change. Writing both keys and
+// syncing NSUserDefaults directly closes that gap.
 - (void)triggerSegmentChanged:(UISegmentedControl *)sender {
-    ESPPrefsSetFloat(@"TriggerMode", (float)sender.selectedSegmentIndex);
+    float v = (float)sender.selectedSegmentIndex;
+    NSUserDefaults *std = [NSUserDefaults standardUserDefaults];
+    [std setFloat:v forKey:@"TriggerMode"];
+    [std setFloat:v forKey:@"TriggerMode_Lite"];
+    [std synchronize];
+    ESPPrefsSetFloat(@"TriggerMode", v);
     ESPSyncFromPrefs();
+    NSLog(@"[VN] TriggerMode set to %.0f (both keys)", v);
 }
 
 - (void)aimPosSegmentChanged:(UISegmentedControl *)sender {
-    ESPPrefsSetFloat(@"AimPos", (float)sender.selectedSegmentIndex);
+    float v = (float)sender.selectedSegmentIndex;
+    NSUserDefaults *std = [NSUserDefaults standardUserDefaults];
+    [std setFloat:v forKey:@"AimPos"];
+    [std setFloat:v forKey:@"AimPos_Lite"];
+    [std synchronize];
+    ESPPrefsSetFloat(@"AimPos", v);
     ESPSyncFromPrefs();
+    NSLog(@"[VN] AimPos set to %.0f (both keys)", v);
 }
 
 - (void)aimBehindWallSwitchChanged:(UISwitch *)sender {
