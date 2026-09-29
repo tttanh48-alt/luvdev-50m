@@ -17,35 +17,31 @@ static void HomeVCBootLogSink(NSString *line);
 
 static const CGFloat kMenuButtonSize = 56.0f;
 
-#pragma mark - VN TOOL iOS-style theme
+#pragma mark - VN TOOL iOS light theme (giống ảnh)
 
-static UIColor *VNBg(void)        { return [UIColor colorWithRed:0.949 green:0.949 blue:0.969 alpha:1.0]; }
-static UIColor *VNCard(void)      { return [UIColor whiteColor]; }
-static UIColor *VNLine(void)      { return [UIColor colorWithWhite:0.78 alpha:0.45]; }
-static UIColor *VNText(void)      { return [UIColor blackColor]; }
-static UIColor *VNMuted(void)     { return [UIColor colorWithWhite:0.42 alpha:1.0]; }
-static UIColor *VNAccent(void)    { return [UIColor colorWithRed:0.20 green:0.78 blue:0.35 alpha:1.0]; }
-static UIColor *VNAccentDim(void) { return [UIColor colorWithRed:0.20 green:0.78 blue:0.35 alpha:0.45]; }
-static UIColor *VNRed(void)       { return [UIColor colorWithRed:1.0 green:0.23 blue:0.19 alpha:1.0]; }
-static UIColor *VNBlue(void)      { return VNAccent(); }
-static UIColor *VNOrange(void)    { return VNAccent(); }
+static UIColor *VNBg(void)       { return [UIColor colorWithRed:0.949 green:0.949 blue:0.969 alpha:1.0]; } // #F2F2F7
+static UIColor *VNCard(void)     { return [UIColor whiteColor]; }
+static UIColor *VNPanel2(void)   { return [UIColor colorWithWhite:0.90 alpha:1.0]; }
+static UIColor *VNLine(void)     { return [UIColor colorWithWhite:0.85 alpha:1.0]; }
+static UIColor *VNText(void)     { return [UIColor blackColor]; }
+static UIColor *VNMuted(void)    { return [UIColor colorWithWhite:0.42 alpha:1.0]; }
+static UIColor *VNAccent(void)   { return [UIColor colorWithRed:0.20 green:0.78 blue:0.35 alpha:1.0]; } // iOS green
+static UIColor *VNAccentDim(void){ return [UIColor colorWithRed:0.20 green:0.78 blue:0.35 alpha:0.5]; }
+static UIColor *VNBlue(void)     { return VNAccent(); }
+static UIColor *VNOrange(void)   { return VNAccent(); }
+static UIColor *VNRed(void)      { return [UIColor colorWithRed:1.0 green:0.23 blue:0.19 alpha:1.0]; }
+
+static UIView *VNMakeCard(void) {
+    UIView *v = [[UIView alloc] init];
+    v.backgroundColor = VNCard();
+    v.layer.cornerRadius = 12.0f;
+    v.layer.borderWidth = 0.0f;
+    v.clipsToBounds = YES;
+    return v;
+}
 
 static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     return [UIFont systemFontOfSize:size weight:weight];
-}
-
-static UILabel *VNMakeSectionHeader(NSString *text) {
-    UILabel *l = [[UILabel alloc] initWithFrame:CGRectZero];
-    l.text = [text uppercaseString];
-    l.font = [UIFont systemFontOfSize:13 weight:UIFontWeightRegular];
-    l.textColor = [UIColor colorWithWhite:0.42 alpha:1.0];
-    return l;
-}
-
-static UIView *VNMakeRowSeparator(void) {
-    UIView *sep = [[UIView alloc] initWithFrame:CGRectZero];
-    sep.backgroundColor = VNLine();
-    return sep;
 }
 
 @interface HomeViewController ()
@@ -53,9 +49,7 @@ static UIView *VNMakeRowSeparator(void) {
 @property (nonatomic, strong) UIView *contentView;
 @property (nonatomic, strong) UIButton *closeBtn;
 @property (nonatomic, strong) UILabel *titleLabel;
-@property (nonatomic, strong) UILabel *subtitleLabel;
 
-// Control
 @property (nonatomic, strong) UIView *controlCard;
 @property (nonatomic, strong) UIImageView *controlIconView;
 @property (nonatomic, strong) UILabel *controlTitleLabel;
@@ -63,7 +57,6 @@ static UIView *VNMakeRowSeparator(void) {
 @property (nonatomic, strong) UIButton *startButton;
 @property (nonatomic, strong) UIButton *killAllButton;
 
-// Toggles
 @property (nonatomic, strong) UIView *togglesCard;
 @property (nonatomic, strong) UILabel *aimbotLabel;
 @property (nonatomic, strong) UISwitch *aimbotSwitch;
@@ -75,9 +68,7 @@ static UIView *VNMakeRowSeparator(void) {
 @property (nonatomic, strong) UISwitch *camSwitch;
 @property (nonatomic, strong) UISlider *camSlider;
 @property (nonatomic, strong) UILabel *camValueLabel;
-@property (nonatomic, strong) UILabel *camValueStaticLabel;
 
-// ESP
 @property (nonatomic, strong) UIView *espCard;
 @property (nonatomic, strong) UILabel *espCardTitle;
 @property (nonatomic, strong) UILabel *espBoxLabel;
@@ -94,7 +85,6 @@ static UIView *VNMakeRowSeparator(void) {
 @property (nonatomic, strong) UISlider *espDistanceLimitSlider;
 @property (nonatomic, strong) UILabel *espDistanceLimitValueLabel;
 
-// Aim
 @property (nonatomic, strong) UIView *aimCard;
 @property (nonatomic, strong) UILabel *fovLabel;
 @property (nonatomic, strong) UISlider *fovSlider;
@@ -106,7 +96,6 @@ static UIView *VNMakeRowSeparator(void) {
 @property (nonatomic, strong) UILabel *aimBehindWallLabel;
 @property (nonatomic, strong) UISwitch *aimBehindWallSwitch;
 
-// Version
 @property (nonatomic, strong) UILabel *versionSectionLabel;
 @property (nonatomic, strong) UIButton *ffMaxCard;
 @property (nonatomic, strong) UIButton *ffCard;
@@ -115,13 +104,11 @@ static UIView *VNMakeRowSeparator(void) {
 @property (nonatomic, strong) UILabel *ffMaxNameLabel;
 @property (nonatomic, strong) UILabel *ffNameLabel;
 
-// Status
 @property (nonatomic, strong) UIView *statusCard;
 @property (nonatomic, strong) UIView *statusDot;
 @property (nonatomic, strong) UILabel *statusLabel;
 @property (nonatomic, strong) UIButton *openGameButton;
 
-// Info
 @property (nonatomic, strong) UIView *licenseCard;
 @property (nonatomic, strong) UILabel *licenseTitleLabel;
 @property (nonatomic, strong) UILabel *licenseValueLabel;
@@ -150,17 +137,6 @@ static UIView *VNMakeRowSeparator(void) {
 @property (nonatomic, assign) NSInteger gameMissingStreak;
 @property (nonatomic, assign) CFTimeInterval pendingHUDEnableUntil;
 @property (nonatomic, assign) NSInteger hudRequestSerial;
-
-// Section headers
-@property (nonatomic, strong) UILabel *secControl;
-@property (nonatomic, strong) UILabel *secDraw;
-@property (nonatomic, strong) UILabel *secAim;
-@property (nonatomic, strong) UILabel *secCamera;
-@property (nonatomic, strong) UILabel *secVersion;
-@property (nonatomic, strong) UILabel *secStatus;
-@property (nonatomic, strong) UILabel *secInfo;
-@property (nonatomic, strong) UILabel *secExtra;
-@property (nonatomic, strong) UILabel *secLog;
 @end
 
 @implementation HomeViewController
@@ -239,91 +215,154 @@ static UIView *VNMakeRowSeparator(void) {
 
 - (void)closeAppTapped:(id)sender {
     (void)sender;
+
     UIApplication *app = [UIApplication sharedApplication];
+
     NSString *bundleId = GameTargetIsMax() ? @"com.dts.freefiremax" : @"vn.vng.freefireth";
     NSURL *url = [NSURL URLWithString:[NSString stringWithFormat:@"%@://", bundleId]];
-    if ([app canOpenURL:url]) { [app openURL:url options:@{} completionHandler:nil]; return; }
+    if ([app canOpenURL:url]) {
+        [app openURL:url options:@{} completionHandler:nil];
+        return;
+    }
     NSArray<NSString *> *fallbacks = GameTargetIsMax()
         ? @[ @"freefiremax://", @"ffmax://" ]
         : @[ @"freefireth://", @"freefire://" ];
     for (NSString *scheme in fallbacks) {
         NSURL *u = [NSURL URLWithString:scheme];
-        if ([app canOpenURL:u]) { [app openURL:u options:@{} completionHandler:nil]; return; }
+        if ([app canOpenURL:u]) {
+            [app openURL:u options:@{} completionHandler:nil];
+            return;
+        }
     }
+
     UIAlertController *alert =
         [UIAlertController alertControllerWithTitle:@"Ẩn menu"
-                                            message:@"Vuốt lên từ đáy màn hình để ẩn app. ĐỪNG tắt app — sẽ mất ESP."
+                                            message:@"Vuốt lên từ đáy màn hình để ẩn app. "
+                                                    @"ĐỪNG tắt app — sẽ mất ESP và có thể gây lỗi máy."
                                      preferredStyle:UIAlertControllerStyleAlert];
-    [alert addAction:[UIAlertAction actionWithTitle:@"Đã hiểu" style:UIAlertActionStyleDefault handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Đã hiểu"
+                                              style:UIAlertActionStyleDefault
+                                            handler:nil]];
     [self presentViewController:alert animated:YES completion:nil];
 }
 
-#pragma mark - Theme
-
 - (void)applyTheme {
     self.view.backgroundColor = VNBg();
-
     _titleLabel.textColor = VNText();
-    _titleLabel.font = VNFont(20, UIFontWeightBold);
-    _subtitleLabel.textColor = VNMuted();
+    _titleLabel.font = VNFont(28, UIFontWeightBold);
 
-    NSArray<UILabel *> *headers = @[_secControl, _secDraw, _secAim, _secCamera,
-                                     _secVersion, _secStatus, _secInfo,
-                                     _secExtra, _secLog, _versionSectionLabel,
-                                     _espCardTitle];
-    for (UILabel *l in headers) { l.textColor = VNMuted(); }
-
-    NSArray<UIView *> *cards = @[_controlCard, _togglesCard, _espCard, _aimCard,
-                                  _statusCard, _licenseCard, _authCard,
-                                  _supportCard, _extraCard, _logCard,
-                                  _ffCard, _ffMaxCard];
-    for (UIView *c in cards) {
-        c.backgroundColor = VNCard();
-        c.layer.cornerRadius = 10.0f;
-        c.layer.borderWidth = 0.0f;
-    }
-
+    // Control
+    _controlCard.backgroundColor = VNCard();
+    _controlCard.layer.borderColor = [UIColor clearColor].CGColor;
+    _controlTitleLabel.textColor = VNText();
+    _controlSubtitleLabel.textColor = VNMuted();
     _startButton.backgroundColor = VNAccent();
     [_startButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    _killAllButton.backgroundColor = [UIColor clearColor];
+    _killAllButton.backgroundColor = VNPanel2();
+    _killAllButton.layer.borderColor = VNRed().CGColor;
     [_killAllButton setTitleColor:VNRed() forState:UIControlStateNormal];
+
+    // Toggles
+    _togglesCard.backgroundColor = VNCard();
+    _togglesCard.layer.borderColor = [UIColor clearColor].CGColor;
+    _aimbotLabel.textColor = VNText();
+    _aimbotSwitch.onTintColor = VNAccent();
+    _silentAimLabel.textColor = VNText();
+    _silentAimSwitch.onTintColor = VNAccent();
+    _espLabel.textColor = VNText();
+    _espSwitch.onTintColor = VNAccent();
+    _camLabel.textColor = VNText();
+    _camSwitch.onTintColor = VNAccent();
+    _camSlider.minimumTrackTintColor = VNAccent();
+    _camValueLabel.textColor = VNMuted();
+
+    // ESP
+    _espCard.backgroundColor = VNCard();
+    _espCard.layer.borderColor = [UIColor clearColor].CGColor;
+    _espCardTitle.textColor = VNMuted();
+    for (UILabel *l in @[_espBoxLabel, _espLineLabel, _espBoneLabel,
+                          _espHealthLabel, _espCountLabel, _espDistanceLimitLabel]) {
+        l.textColor = VNText();
+    }
+    for (UISwitch *s in @[_espBoxSwitch, _espLineSwitch, _espBoneSwitch,
+                           _espHealthSwitch, _espCountSwitch]) {
+        s.onTintColor = VNAccent();
+    }
+    _espDistanceLimitSlider.minimumTrackTintColor = VNAccent();
+    _espDistanceLimitValueLabel.textColor = VNMuted();
+
+    // Aimbot
+    _aimCard.backgroundColor = VNCard();
+    _aimCard.layer.borderColor = [UIColor clearColor].CGColor;
+    _fovLabel.textColor = VNText();
+    _fovSlider.minimumTrackTintColor = VNAccent();
+    _fovValueLabel.textColor = VNMuted();
+    _triggerLabel.textColor = VNText();
+    _triggerSegment.selectedSegmentTintColor = VNAccent();
+    _triggerSegment.backgroundColor = VNPanel2();
+    _aimPosLabel.textColor = VNText();
+    _aimPosSegment.selectedSegmentTintColor = VNAccent();
+    _aimPosSegment.backgroundColor = VNPanel2();
+    _aimBehindWallLabel.textColor = VNText();
+    _aimBehindWallSwitch.onTintColor = VNAccent();
+
+    // Version
+    _versionSectionLabel.textColor = VNMuted();
+    _ffMaxCard.backgroundColor = VNCard();
+    _ffCard.backgroundColor = VNCard();
+    _ffMaxNameLabel.textColor = VNText();
+    _ffNameLabel.textColor = VNText();
+
+    // Status
+    _statusCard.backgroundColor = VNCard();
+    _statusCard.layer.borderColor = [UIColor clearColor].CGColor;
+    _statusLabel.textColor = VNText();
     _openGameButton.backgroundColor = VNAccent();
     [_openGameButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+
+    // License / Auth
+    _licenseCard.backgroundColor = VNCard();
+    _licenseCard.layer.borderColor = [UIColor clearColor].CGColor;
+    _authCard.backgroundColor = VNCard();
+    _authCard.layer.borderColor = [UIColor clearColor].CGColor;
+    _licenseTitleLabel.textColor = VNMuted();
+    _licenseValueLabel.textColor = VNText();
+    _authTitleLabel.textColor = VNMuted();
+    _authValueLabel.textColor = VNAccent();
+
+    // Support
+    _supportCard.backgroundColor = VNCard();
+    _supportCard.layer.borderColor = [UIColor clearColor].CGColor;
+    _supportTitleLabel.textColor = VNText();
+    _supportSubtitleLabel.textColor = VNMuted();
     _joinButton.backgroundColor = VNAccent();
     [_joinButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+
+    // Extra
+    _extraCard.backgroundColor = VNCard();
+    _extraCard.layer.borderColor = [UIColor clearColor].CGColor;
+    _autoCleanLabel.textColor = VNText();
+    _autoCleanSwitch.onTintColor = VNAccent();
+    _authorizationLabel.textColor = VNText();
     [_authorizationButton setTitleColor:VNAccent() forState:UIControlStateNormal];
 
-    NSArray<UISwitch *> *allSwitches = @[_aimbotSwitch, _silentAimSwitch, _espSwitch,
-        _camSwitch, _espBoxSwitch, _espLineSwitch, _espBoneSwitch, _espHealthSwitch,
-        _espCountSwitch, _aimBehindWallSwitch, _autoCleanSwitch];
-    for (UISwitch *s in allSwitches) s.onTintColor = VNAccent();
-
-    _camSlider.minimumTrackTintColor = VNAccent();
-    _fovSlider.minimumTrackTintColor = VNAccent();
-    _espDistanceLimitSlider.minimumTrackTintColor = VNAccent();
-
-    _triggerSegment.selectedSegmentTintColor = [UIColor whiteColor];
-    _triggerSegment.backgroundColor = [UIColor colorWithWhite:0.90 alpha:1.0];
-    _aimPosSegment.selectedSegmentTintColor = [UIColor whiteColor];
-    _aimPosSegment.backgroundColor = [UIColor colorWithWhite:0.90 alpha:1.0];
-
+    // Log
+    _logCard.backgroundColor = VNCard();
+    _logCard.layer.borderColor = [UIColor clearColor].CGColor;
     _logTextView.backgroundColor = [UIColor colorWithWhite:0.97 alpha:1.0];
-    _logTextView.textColor = [UIColor colorWithRed:0.12 green:0.55 blue:0.22 alpha:1.0];
-    _logTextView.layer.borderWidth = 1.0f;
     _logTextView.layer.borderColor = VNLine().CGColor;
+    _logTextView.textColor = [UIColor colorWithRed:0.12 green:0.55 blue:0.22 alpha:1.0];
 
-    for (UIButton *b in @[_settingsBtn, _trashBtn, _closeBtn]) {
-        b.backgroundColor = [UIColor clearColor];
-        b.layer.borderWidth = 0;
-        b.tintColor = VNAccent();
-    }
+    // Top buttons
+    _settingsBtn.backgroundColor = VNPanel2();
+    _settingsBtn.layer.borderColor = [UIColor clearColor].CGColor;
+    _settingsBtn.tintColor = VNAccent();
+    _trashBtn.backgroundColor = VNPanel2();
+    _trashBtn.layer.borderColor = [UIColor clearColor].CGColor;
+    _trashBtn.tintColor = VNAccent();
+    _closeBtn.backgroundColor = VNPanel2();
+    _closeBtn.layer.borderColor = [UIColor clearColor].CGColor;
     [_closeBtn setTitleColor:VNAccent() forState:UIControlStateNormal];
-
-    _statusLabel.textColor = VNText();
-    _licenseTitleLabel.textColor = VNText();
-    _licenseValueLabel.textColor = VNMuted();
-    _authTitleLabel.textColor = VNText();
-    _authValueLabel.textColor = VNAccent();
 
     [self updateVersionSelectionUI];
     [self updateAuthorizationPresentation];
@@ -340,17 +379,14 @@ static UIView *VNMakeRowSeparator(void) {
     return img;
 }
 
-- (UIView *)makeCard {
-    UIView *v = [[UIView alloc] init];
-    v.backgroundColor = VNCard();
-    v.layer.cornerRadius = 10.0f;
-    v.clipsToBounds = YES;
-    return v;
-}
+- (UIView *)makeCard { return VNMakeCard(); }
 
 - (UIButton *)makeIconButton:(NSString *)systemName {
     UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
-    b.backgroundColor = [UIColor clearColor];
+    b.backgroundColor = VNPanel2();
+    b.layer.cornerRadius = 10.0f;
+    b.layer.borderWidth = 0.0f;
+    b.layer.borderColor = [UIColor clearColor].CGColor;
     b.tintColor = VNAccent();
     UIImage *img = [UIImage systemImageNamed:systemName];
     if (img) [b setImage:img forState:UIControlStateNormal];
@@ -359,8 +395,11 @@ static UIView *VNMakeRowSeparator(void) {
 
 - (UIButton *)makeCloseButton {
     UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
-    b.backgroundColor = [UIColor clearColor];
-    b.titleLabel.font = [UIFont systemFontOfSize:18 weight:UIFontWeightSemibold];
+    b.backgroundColor = VNPanel2();
+    b.layer.cornerRadius = 10.0f;
+    b.layer.borderWidth = 0.0f;
+    b.layer.borderColor = [UIColor clearColor].CGColor;
+    b.titleLabel.font = [UIFont systemFontOfSize:18 weight:UIFontWeightBold];
     [b setTitle:@"✕" forState:UIControlStateNormal];
     [b setTitleColor:VNAccent() forState:UIControlStateNormal];
     return b;
@@ -370,7 +409,7 @@ static UIView *VNMakeRowSeparator(void) {
                                  nameLabel:(UILabel * __strong *)outName {
     UIButton *card = [UIButton buttonWithType:UIButtonTypeCustom];
     card.backgroundColor = VNCard();
-    card.layer.cornerRadius = 10.0f;
+    card.layer.cornerRadius = 14.0f;
     card.clipsToBounds = YES;
     card.layer.borderWidth = 2.0f;
     card.layer.borderColor = [UIColor clearColor].CGColor;
@@ -379,12 +418,12 @@ static UIView *VNMakeRowSeparator(void) {
     UIImageView *icon = [[UIImageView alloc] initWithFrame:CGRectZero];
     icon.contentMode = UIViewContentModeScaleAspectFill;
     icon.clipsToBounds = YES;
-    icon.layer.cornerRadius = 8.0f;
+    icon.layer.cornerRadius = 10.0f;
     icon.userInteractionEnabled = NO;
     [card addSubview:icon];
 
     UILabel *name = [[UILabel alloc] initWithFrame:CGRectZero];
-    name.font = VNFont(13, UIFontWeightMedium);
+    name.font = VNFont(13, UIFontWeightSemibold);
     name.textColor = VNText();
     name.textAlignment = NSTextAlignmentCenter;
     name.userInteractionEnabled = NO;
@@ -397,22 +436,25 @@ static UIView *VNMakeRowSeparator(void) {
 
 - (void)beginAuthorization { [self updateAuthorizationPresentation]; [self refreshHUDState]; }
 - (void)retryAuthorization:(id)sender { (void)sender; [self beginAuthorization]; }
-- (void)revokeAuthorization { SetHUDEnabled(NO); [self updateAuthorizationPresentation]; [self refreshHUDState]; }
+- (void)revokeAuthorization {
+    SetHUDEnabled(NO);
+    [self updateAuthorizationPresentation];
+    [self refreshHUDState];
+}
 
 - (void)updateAuthorizationPresentation {
     if (!self.isViewLoaded) return;
-    _authorizationLabel.text = @"Miễn phí";
-    [_authorizationButton setTitle:@"Đã mở khoá" forState:UIControlStateNormal];
+    _authorizationLabel.text = @"No key required";
+    [_authorizationButton setTitle:@"Unlocked" forState:UIControlStateNormal];
     _authorizationButton.enabled = NO;
-    _licenseValueLabel.text = @"Không giới hạn";
+    _licenseValueLabel.text = @"Unlimited";
     _authValueLabel.text = @"Hoạt động";
     _authValueLabel.textColor = VNAccent();
+    _authorizationLabel.textColor = VNText();
     _autoCleanSwitch.enabled = YES;
     _autoCleanLabel.alpha = 1.0;
     _startButton.alpha = 1.0;
 }
-
-#pragma mark - Build UI
 
 - (void)buildUI {
     self.view.backgroundColor = VNBg();
@@ -427,7 +469,6 @@ static UIView *VNMakeRowSeparator(void) {
     _contentView.backgroundColor = VNBg();
     [_scrollView addSubview:_contentView];
 
-    // Top bar
     _closeBtn = [self makeCloseButton];
     [_closeBtn addTarget:self action:@selector(closeAppTapped:) forControlEvents:UIControlEventTouchUpInside];
     [self.view addSubview:_closeBtn];
@@ -441,34 +482,24 @@ static UIView *VNMakeRowSeparator(void) {
 
     _titleLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     _titleLabel.text = @"VN TOOL";
-    _titleLabel.font = VNFont(20, UIFontWeightBold);
+    _titleLabel.font = VNFont(28, UIFontWeightBold);
     _titleLabel.textColor = VNText();
     [_contentView addSubview:_titleLabel];
 
-    _subtitleLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-    _subtitleLabel.text = @"iOS Companion";
-    _subtitleLabel.font = VNFont(12, UIFontWeightRegular);
-    _subtitleLabel.textColor = VNMuted();
-    [_contentView addSubview:_subtitleLabel];
-
-    // ============ SECTION: ĐIỀU KHIỂN HUD ============
-    _secControl = VNMakeSectionHeader(@"Điều khiển HUD");
-    [_contentView addSubview:_secControl];
-
+    // Control card
     _controlCard = [self makeCard];
     [_contentView addSubview:_controlCard];
-
     _controlIconView = [[UIImageView alloc] initWithFrame:CGRectZero];
     _controlIconView.contentMode = UIViewContentModeScaleAspectFill;
     _controlIconView.clipsToBounds = YES;
-    _controlIconView.layer.cornerRadius = 8.0f;
+    _controlIconView.layer.cornerRadius = 12.0f;
     _controlIconView.image = [self imageNamedWebPOrPNG:@"ff"] ?: [UIImage imageNamed:@"logo"];
-    _controlIconView.backgroundColor = [UIColor colorWithWhite:0.95 alpha:1.0];
+    _controlIconView.backgroundColor = VNPanel2();
     [_controlCard addSubview:_controlIconView];
 
     _controlTitleLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-    _controlTitleLabel.text = @"HUD Overlay";
-    _controlTitleLabel.font = VNFont(16, UIFontWeightRegular);
+    _controlTitleLabel.text = @"Điều khiển HUD";
+    _controlTitleLabel.font = VNFont(16, UIFontWeightSemibold);
     _controlTitleLabel.textColor = VNText();
     [_controlCard addSubview:_controlTitleLabel];
 
@@ -479,126 +510,163 @@ static UIView *VNMakeRowSeparator(void) {
     _controlSubtitleLabel.numberOfLines = 2;
     [_controlCard addSubview:_controlSubtitleLabel];
 
-    UIView *sep1 = VNMakeRowSeparator();
-    sep1.tag = 9101;
-    [_controlCard addSubview:sep1];
-
     _startButton = [UIButton buttonWithType:UIButtonTypeSystem];
     _startButton.backgroundColor = VNAccent();
-    _startButton.layer.cornerRadius = 8.0f;
-    _startButton.titleLabel.font = VNFont(14, UIFontWeightSemibold);
+    _startButton.layer.cornerRadius = 12.0f;
+    _startButton.titleLabel.font = VNFont(13, UIFontWeightBold);
     [_startButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     [_startButton setTitle:@"Bắt đầu" forState:UIControlStateNormal];
     [_startButton addTarget:self action:@selector(startButtonTapped:) forControlEvents:UIControlEventTouchUpInside];
     [_controlCard addSubview:_startButton];
 
     _killAllButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    _killAllButton.backgroundColor = [UIColor clearColor];
-    _killAllButton.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeft;
-    _killAllButton.titleLabel.font = VNFont(16, UIFontWeightRegular);
+    _killAllButton.backgroundColor = VNPanel2();
+    _killAllButton.layer.cornerRadius = 12.0f;
+    _killAllButton.layer.borderWidth = 1.0f;
+    _killAllButton.layer.borderColor = VNRed().CGColor;
+    _killAllButton.titleLabel.font = VNFont(12, UIFontWeightBold);
     [_killAllButton setTitleColor:VNRed() forState:UIControlStateNormal];
-    [_killAllButton setTitle:@"Tắt toàn bộ ESP / Aimbot" forState:UIControlStateNormal];
+    [_killAllButton setTitle:@"Tắt hết" forState:UIControlStateNormal];
     [_killAllButton addTarget:self action:@selector(killAllTapped:) forControlEvents:UIControlEventTouchUpInside];
     [_controlCard addSubview:_killAllButton];
 
-    // ============ SECTION: VẼ (ESP) ============
-    _secDraw = VNMakeSectionHeader(@"Vẽ");
-    [_contentView addSubview:_secDraw];
+    // Toggles card
+    _togglesCard = [self makeCard];
+    [_contentView addSubview:_togglesCard];
 
+    _aimbotLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+    _aimbotLabel.text = @"Aimbot";
+    _aimbotLabel.font = VNFont(15, UIFontWeightSemibold);
+    _aimbotLabel.textColor = VNText();
+    [_togglesCard addSubview:_aimbotLabel];
+    _aimbotSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
+    _aimbotSwitch.onTintColor = VNAccent();
+    _aimbotSwitch.on = ESPPrefsBool(@"Aimbot", NO);
+    [_aimbotSwitch addTarget:self action:@selector(aimbotSwitchChanged:) forControlEvents:UIControlEventValueChanged];
+    [_togglesCard addSubview:_aimbotSwitch];
+
+    _silentAimLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+    _silentAimLabel.text = @"Silent Aim";
+    _silentAimLabel.font = VNFont(15, UIFontWeightSemibold);
+    _silentAimLabel.textColor = VNText();
+    [_togglesCard addSubview:_silentAimLabel];
+    _silentAimSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
+    _silentAimSwitch.onTintColor = VNAccent();
+    _silentAimSwitch.on = ESPPrefsBool(@"AimSilent", NO);
+    [_silentAimSwitch addTarget:self action:@selector(silentAimSwitchChanged:) forControlEvents:UIControlEventValueChanged];
+    [_togglesCard addSubview:_silentAimSwitch];
+
+    _espLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+    _espLabel.text = @"ESP Master";
+    _espLabel.font = VNFont(15, UIFontWeightSemibold);
+    _espLabel.textColor = VNText();
+    [_togglesCard addSubview:_espLabel];
+    _espSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
+    _espSwitch.onTintColor = VNAccent();
+    _espSwitch.on = ESPPrefsBool(@"EnableESP", YES);
+    [_espSwitch addTarget:self action:@selector(espSwitchChanged:) forControlEvents:UIControlEventValueChanged];
+    [_togglesCard addSubview:_espSwitch];
+
+    _camLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+    _camLabel.text = @"Camera Xa (CamPC)";
+    _camLabel.font = VNFont(15, UIFontWeightSemibold);
+    _camLabel.textColor = VNText();
+    [_togglesCard addSubview:_camLabel];
+    _camSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
+    _camSwitch.onTintColor = VNAccent();
+    _camSwitch.on = ESPPrefsBool(@"CamPC", NO);
+    [_camSwitch addTarget:self action:@selector(camSwitchChanged:) forControlEvents:UIControlEventValueChanged];
+    [_togglesCard addSubview:_camSwitch];
+
+    _camSlider = [[UISlider alloc] initWithFrame:CGRectZero];
+    _camSlider.minimumValue = 0.0f;
+    _camSlider.maximumValue = 150.0f;
+    _camSlider.value = ESPPrefsFloat(@"CamPCValue", 30.0f);
+    _camSlider.minimumTrackTintColor = VNAccent();
+    [_camSlider addTarget:self action:@selector(camSliderChanged:) forControlEvents:UIControlEventValueChanged];
+    [_togglesCard addSubview:_camSlider];
+    _camValueLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+    _camValueLabel.font = [UIFont monospacedSystemFontOfSize:12 weight:UIFontWeightSemibold];
+    _camValueLabel.textColor = VNMuted();
+    _camValueLabel.textAlignment = NSTextAlignmentRight;
+    _camValueLabel.text = [NSString stringWithFormat:@"%.0f", _camSlider.value];
+    [_togglesCard addSubview:_camValueLabel];
+
+    // ESP ELEMENTS card
     _espCard = [self makeCard];
     [_contentView addSubview:_espCard];
+    _espCardTitle = [[UILabel alloc] initWithFrame:CGRectZero];
+    _espCardTitle.text = @"ESP ELEMENTS";
+    _espCardTitle.font = VNFont(11, UIFontWeightSemibold);
+    _espCardTitle.textColor = VNMuted();
+    [_espCard addSubview:_espCardTitle];
 
-    // Box
     _espBoxLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     _espBoxLabel.text = @"Box";
-    _espBoxLabel.font = VNFont(16, UIFontWeightRegular);
+    _espBoxLabel.font = VNFont(14, UIFontWeightMedium);
     _espBoxLabel.textColor = VNText();
     [_espCard addSubview:_espBoxLabel];
-
     _espBoxSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
     _espBoxSwitch.onTintColor = VNAccent();
     _espBoxSwitch.on = ESPPrefsBool(@"Box", YES);
     [_espBoxSwitch addTarget:self action:@selector(espBoxChanged:) forControlEvents:UIControlEventValueChanged];
     [_espCard addSubview:_espBoxSwitch];
 
-    { UIView *sep = VNMakeRowSeparator(); sep.tag = 9200; [_espCard addSubview:sep]; }
-
-    // Snapline
     _espLineLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     _espLineLabel.text = @"Snapline";
-    _espLineLabel.font = VNFont(16, UIFontWeightRegular);
+    _espLineLabel.font = VNFont(14, UIFontWeightMedium);
     _espLineLabel.textColor = VNText();
     [_espCard addSubview:_espLineLabel];
-
     _espLineSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
     _espLineSwitch.onTintColor = VNAccent();
     _espLineSwitch.on = ESPPrefsBool(@"Line", YES);
     [_espLineSwitch addTarget:self action:@selector(espLineChanged:) forControlEvents:UIControlEventValueChanged];
     [_espCard addSubview:_espLineSwitch];
 
-    { UIView *sep = VNMakeRowSeparator(); sep.tag = 9201; [_espCard addSubview:sep]; }
-
-    // Bone
     _espBoneLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     _espBoneLabel.text = @"Bone / Skeleton";
-    _espBoneLabel.font = VNFont(16, UIFontWeightRegular);
+    _espBoneLabel.font = VNFont(14, UIFontWeightMedium);
     _espBoneLabel.textColor = VNText();
     [_espCard addSubview:_espBoneLabel];
-
     _espBoneSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
     _espBoneSwitch.onTintColor = VNAccent();
     _espBoneSwitch.on = ESPPrefsBool(@"Bone", YES);
     [_espBoneSwitch addTarget:self action:@selector(espBoneChanged:) forControlEvents:UIControlEventValueChanged];
     [_espCard addSubview:_espBoneSwitch];
 
-    { UIView *sep = VNMakeRowSeparator(); sep.tag = 9202; [_espCard addSubview:sep]; }
-
-    // Health
     _espHealthLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     _espHealthLabel.text = @"Health Bar";
-    _espHealthLabel.font = VNFont(16, UIFontWeightRegular);
+    _espHealthLabel.font = VNFont(14, UIFontWeightMedium);
     _espHealthLabel.textColor = VNText();
     [_espCard addSubview:_espHealthLabel];
-
     _espHealthSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
     _espHealthSwitch.onTintColor = VNAccent();
     _espHealthSwitch.on = ESPPrefsBool(@"Health", YES);
     [_espHealthSwitch addTarget:self action:@selector(espHealthChanged:) forControlEvents:UIControlEventValueChanged];
     [_espCard addSubview:_espHealthSwitch];
 
-    { UIView *sep = VNMakeRowSeparator(); sep.tag = 9203; [_espCard addSubview:sep]; }
-
-    // Count
     _espCountLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     _espCountLabel.text = @"Player Count";
-    _espCountLabel.font = VNFont(16, UIFontWeightRegular);
+    _espCountLabel.font = VNFont(14, UIFontWeightMedium);
     _espCountLabel.textColor = VNText();
     [_espCard addSubview:_espCountLabel];
-
     _espCountSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
     _espCountSwitch.onTintColor = VNAccent();
     _espCountSwitch.on = ESPPrefsBool(@"Count", YES);
     [_espCountSwitch addTarget:self action:@selector(espCountChanged:) forControlEvents:UIControlEventValueChanged];
     [_espCard addSubview:_espCountSwitch];
 
-    // Distance
-    UIView *sepLast = VNMakeRowSeparator();
-    sepLast.tag = 9210;
-    [_espCard addSubview:sepLast];
-
     _espDistanceLimitLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-    _espDistanceLimitLabel.text = @"Khoảng cách tối đa";
-    _espDistanceLimitLabel.font = VNFont(16, UIFontWeightRegular);
+    _espDistanceLimitLabel.text = @"Max Distance (m)";
+    _espDistanceLimitLabel.font = VNFont(14, UIFontWeightSemibold);
     _espDistanceLimitLabel.textColor = VNText();
     [_espCard addSubview:_espDistanceLimitLabel];
-
     _espDistanceLimitValueLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-    _espDistanceLimitValueLabel.font = [UIFont monospacedSystemFontOfSize:14 weight:UIFontWeightRegular];
+    _espDistanceLimitValueLabel.font = [UIFont monospacedSystemFontOfSize:12 weight:UIFontWeightSemibold];
     _espDistanceLimitValueLabel.textColor = VNMuted();
     _espDistanceLimitValueLabel.textAlignment = NSTextAlignmentRight;
-    _espDistanceLimitValueLabel.text = [NSString stringWithFormat:@"%.0f m", ESPPrefsFloat(@"EspDistanceLimit", 150.0f)];
+    _espDistanceLimitValueLabel.text = [NSString stringWithFormat:@"%.0f", ESPPrefsFloat(@"EspDistanceLimit", 150.0f)];
     [_espCard addSubview:_espDistanceLimitValueLabel];
-
     _espDistanceLimitSlider = [[UISlider alloc] initWithFrame:CGRectZero];
     _espDistanceLimitSlider.minimumValue = 20.0f;
     _espDistanceLimitSlider.maximumValue = 300.0f;
@@ -608,71 +676,14 @@ static UIView *VNMakeRowSeparator(void) {
     [_espDistanceLimitSlider addTarget:self action:@selector(espDistanceLimitCommitted:) forControlEvents:UIControlEventTouchUpInside | UIControlEventTouchUpOutside];
     [_espCard addSubview:_espDistanceLimitSlider];
 
-    // ============ SECTION: AIM ============
-    _secAim = VNMakeSectionHeader(@"Aim");
-    [_contentView addSubview:_secAim];
-
+    // Aimbot card
     _aimCard = [self makeCard];
     [_contentView addSubview:_aimCard];
-
-    // Enable Aim
-    _aimbotLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-    _aimbotLabel.text = @"Enable Aim";
-    _aimbotLabel.font = VNFont(16, UIFontWeightRegular);
-    _aimbotLabel.textColor = VNText();
-    [_aimCard addSubview:_aimbotLabel];
-
-    _aimbotSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
-    _aimbotSwitch.onTintColor = VNAccent();
-    _aimbotSwitch.on = ESPPrefsBool(@"Aimbot", NO);
-    [_aimbotSwitch addTarget:self action:@selector(aimbotSwitchChanged:) forControlEvents:UIControlEventValueChanged];
-    [_aimCard addSubview:_aimbotSwitch];
-
-    { UIView *sep = VNMakeRowSeparator(); sep.tag = 9301; [_aimCard addSubview:sep]; }
-
-    // Silent Aim
-    _silentAimLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-    _silentAimLabel.text = @"Silent Aim";
-    _silentAimLabel.font = VNFont(16, UIFontWeightRegular);
-    _silentAimLabel.textColor = VNText();
-    [_aimCard addSubview:_silentAimLabel];
-
-    _silentAimSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
-    _silentAimSwitch.onTintColor = VNAccent();
-    _silentAimSwitch.on = ESPPrefsBool(@"AimSilent", NO);
-    [_silentAimSwitch addTarget:self action:@selector(silentAimSwitchChanged:) forControlEvents:UIControlEventValueChanged];
-    [_aimCard addSubview:_silentAimSwitch];
-
-    { UIView *sep = VNMakeRowSeparator(); sep.tag = 9302; [_aimCard addSubview:sep]; }
-
-    // Behind wall
-    _aimBehindWallLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-    _aimBehindWallLabel.text = @"Aim Behind Wall";
-    _aimBehindWallLabel.font = VNFont(16, UIFontWeightRegular);
-    _aimBehindWallLabel.textColor = VNText();
-    [_aimCard addSubview:_aimBehindWallLabel];
-
-    _aimBehindWallSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
-    _aimBehindWallSwitch.onTintColor = VNAccent();
-    _aimBehindWallSwitch.on = ESPPrefsBool(@"AimBehindWall", NO);
-    [_aimBehindWallSwitch addTarget:self action:@selector(aimBehindWallSwitchChanged:) forControlEvents:UIControlEventValueChanged];
-    [_aimCard addSubview:_aimBehindWallSwitch];
-
-    { UIView *sep = VNMakeRowSeparator(); sep.tag = 9303; [_aimCard addSubview:sep]; }
-
-    // FOV
     _fovLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-    _fovLabel.text = @"FOV";
-    _fovLabel.font = VNFont(16, UIFontWeightRegular);
+    _fovLabel.text = @"FOV size";
+    _fovLabel.font = VNFont(14, UIFontWeightSemibold);
     _fovLabel.textColor = VNText();
     [_aimCard addSubview:_fovLabel];
-
-    _fovValueLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-    _fovValueLabel.font = [UIFont monospacedSystemFontOfSize:14 weight:UIFontWeightRegular];
-    _fovValueLabel.textColor = VNMuted();
-    _fovValueLabel.textAlignment = NSTextAlignmentRight;
-    _fovValueLabel.text = [NSString stringWithFormat:@"%.0f", ESPPrefsFloat(@"Fov", 150.0f)];
-    [_aimCard addSubview:_fovValueLabel];
 
     _fovSlider = [[UISlider alloc] initWithFrame:CGRectZero];
     _fovSlider.minimumValue = 30.0f;
@@ -682,12 +693,16 @@ static UIView *VNMakeRowSeparator(void) {
     [_fovSlider addTarget:self action:@selector(fovSliderChanged:) forControlEvents:UIControlEventValueChanged];
     [_aimCard addSubview:_fovSlider];
 
-    { UIView *sep = VNMakeRowSeparator(); sep.tag = 9304; [_aimCard addSubview:sep]; }
+    _fovValueLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+    _fovValueLabel.font = [UIFont monospacedSystemFontOfSize:12 weight:UIFontWeightSemibold];
+    _fovValueLabel.textColor = VNMuted();
+    _fovValueLabel.textAlignment = NSTextAlignmentRight;
+    _fovValueLabel.text = [NSString stringWithFormat:@"%.0f", _fovSlider.value];
+    [_aimCard addSubview:_fovValueLabel];
 
-    // Trigger
     _triggerLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     _triggerLabel.text = @"Trigger";
-    _triggerLabel.font = VNFont(16, UIFontWeightRegular);
+    _triggerLabel.font = VNFont(14, UIFontWeightSemibold);
     _triggerLabel.textColor = VNText();
     [_aimCard addSubview:_triggerLabel];
 
@@ -699,18 +714,15 @@ static UIView *VNMakeRowSeparator(void) {
         _triggerSegment.selectedSegmentIndex = idx;
     }
     if (@available(iOS 13.0, *)) {
-        _triggerSegment.selectedSegmentTintColor = [UIColor whiteColor];
-        _triggerSegment.backgroundColor = [UIColor colorWithWhite:0.90 alpha:1.0];
+        _triggerSegment.selectedSegmentTintColor = VNAccent();
+        _triggerSegment.backgroundColor = VNPanel2();
     }
     [_triggerSegment addTarget:self action:@selector(triggerSegmentChanged:) forControlEvents:UIControlEventValueChanged];
     [_aimCard addSubview:_triggerSegment];
 
-    { UIView *sep = VNMakeRowSeparator(); sep.tag = 9305; [_aimCard addSubview:sep]; }
-
-    // Aim Pos
     _aimPosLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     _aimPosLabel.text = @"Aim Position";
-    _aimPosLabel.font = VNFont(16, UIFontWeightRegular);
+    _aimPosLabel.font = VNFont(14, UIFontWeightSemibold);
     _aimPosLabel.textColor = VNText();
     [_aimCard addSubview:_aimPosLabel];
 
@@ -722,58 +734,46 @@ static UIView *VNMakeRowSeparator(void) {
         _aimPosSegment.selectedSegmentIndex = idx;
     }
     if (@available(iOS 13.0, *)) {
-        _aimPosSegment.selectedSegmentTintColor = [UIColor whiteColor];
-        _aimPosSegment.backgroundColor = [UIColor colorWithWhite:0.90 alpha:1.0];
+        _aimPosSegment.selectedSegmentTintColor = VNAccent();
+        _aimPosSegment.backgroundColor = VNPanel2();
     }
     [_aimPosSegment addTarget:self action:@selector(aimPosSegmentChanged:) forControlEvents:UIControlEventValueChanged];
     [_aimCard addSubview:_aimPosSegment];
 
-    // ============ SECTION: CAMERA ============
-    _secCamera = VNMakeSectionHeader(@"Camera");
-    [_contentView addSubview:_secCamera];
+    _aimBehindWallLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+    _aimBehindWallLabel.text = @"Aim Behind Wall";
+    _aimBehindWallLabel.font = VNFont(14, UIFontWeightSemibold);
+    _aimBehindWallLabel.textColor = VNText();
+    [_aimCard addSubview:_aimBehindWallLabel];
 
-    _togglesCard = [self makeCard];
-    [_contentView addSubview:_togglesCard];
+    _aimBehindWallSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
+    _aimBehindWallSwitch.onTintColor = VNAccent();
+    _aimBehindWallSwitch.on = ESPPrefsBool(@"AimBehindWall", NO);
+    [_aimBehindWallSwitch addTarget:self action:@selector(aimBehindWallSwitchChanged:) forControlEvents:UIControlEventValueChanged];
+    [_aimCard addSubview:_aimBehindWallSwitch];
 
-    _camLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-    _camLabel.text = @"Camera Xa (CamPC)";
-    _camLabel.font = VNFont(16, UIFontWeightRegular);
-    _camLabel.textColor = VNText();
-    [_togglesCard addSubview:_camLabel];
+    // Log card
+    _logCard = [self makeCard];
+    [_contentView addSubview:_logCard];
+    _logTextView = [[UITextView alloc] initWithFrame:CGRectZero];
+    _logTextView.editable = NO;
+    _logTextView.scrollEnabled = YES;
+    _logTextView.showsHorizontalScrollIndicator = NO;
+    _logTextView.backgroundColor = [UIColor colorWithWhite:0.97 alpha:1.0];
+    _logTextView.layer.cornerRadius = 10.0f;
+    _logTextView.layer.borderWidth = 1.0f;
+    _logTextView.layer.borderColor = VNLine().CGColor;
+    _logTextView.font = [UIFont monospacedSystemFontOfSize:10 weight:UIFontWeightRegular];
+    _logTextView.textColor = [UIColor colorWithRed:0.12 green:0.55 blue:0.22 alpha:1.0];
+    _logTextView.text = @"[VN TOOL] ready.\nPress Bắt đầu to boot kernel.";
+    [_logCard addSubview:_logTextView];
 
-    _camSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
-    _camSwitch.onTintColor = VNAccent();
-    _camSwitch.on = ESPPrefsBool(@"CamPC", NO);
-    [_camSwitch addTarget:self action:@selector(camSwitchChanged:) forControlEvents:UIControlEventValueChanged];
-    [_togglesCard addSubview:_camSwitch];
-
-    { UIView *sep = VNMakeRowSeparator(); sep.tag = 9401; [_togglesCard addSubview:sep]; }
-
-    _camValueStaticLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-    _camValueStaticLabel.text = @"Giá trị";
-    _camValueStaticLabel.font = VNFont(16, UIFontWeightRegular);
-    _camValueStaticLabel.textColor = VNText();
-    [_togglesCard addSubview:_camValueStaticLabel];
-
-    _camValueLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-    _camValueLabel.font = [UIFont monospacedSystemFontOfSize:14 weight:UIFontWeightRegular];
-    _camValueLabel.textColor = VNMuted();
-    _camValueLabel.textAlignment = NSTextAlignmentRight;
-    _camValueLabel.text = [NSString stringWithFormat:@"%.0f", ESPPrefsFloat(@"CamPCValue", 30.0f)];
-    [_togglesCard addSubview:_camValueLabel];
-
-    _camSlider = [[UISlider alloc] initWithFrame:CGRectZero];
-    _camSlider.minimumValue = 0.0f;
-    _camSlider.maximumValue = 150.0f;
-    _camSlider.value = ESPPrefsFloat(@"CamPCValue", 30.0f);
-    _camSlider.minimumTrackTintColor = VNAccent();
-    [_camSlider addTarget:self action:@selector(camSliderChanged:) forControlEvents:UIControlEventValueChanged];
-    [_togglesCard addSubview:_camSlider];
-
-    // ============ SECTION: PHIÊN BẢN ============
-    _secVersion = VNMakeSectionHeader(@"Phiên bản game");
-    [_contentView addSubview:_secVersion];
-    _versionSectionLabel = _secVersion;
+    // Version section
+    _versionSectionLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+    _versionSectionLabel.text = @"Lựa chọn phiên bản:";
+    _versionSectionLabel.font = VNFont(13, UIFontWeightMedium);
+    _versionSectionLabel.textColor = VNMuted();
+    [_contentView addSubview:_versionSectionLabel];
 
     UIImageView *ffMaxIcon = nil; UILabel *ffMaxName = nil;
     _ffMaxCard = [self makeVersionCardCapturingIcon:&ffMaxIcon nameLabel:&ffMaxName];
@@ -793,48 +793,39 @@ static UIView *VNMakeRowSeparator(void) {
     [_ffCard addTarget:self action:@selector(versionCardTapped:) forControlEvents:UIControlEventTouchUpInside];
     [_contentView addSubview:_ffCard];
 
-    // ============ SECTION: TRẠNG THÁI ============
-    _secStatus = VNMakeSectionHeader(@"Trạng thái");
-    [_contentView addSubview:_secStatus];
-
+    // Status card
     _statusCard = [self makeCard];
     [_contentView addSubview:_statusCard];
-
     _statusDot = [[UIView alloc] initWithFrame:CGRectZero];
     _statusDot.layer.cornerRadius = 5.0f;
     _statusDot.backgroundColor = [UIColor colorWithWhite:0.6 alpha:1.0];
     [_statusCard addSubview:_statusDot];
-
     _statusLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-    _statusLabel.font = VNFont(15, UIFontWeightRegular);
+    _statusLabel.font = VNFont(14, UIFontWeightMedium);
     _statusLabel.textColor = VNText();
-    _statusLabel.text = @"Game chưa chạy";
+    _statusLabel.text = @"Trạng thái · Game chưa chạy";
     [_statusCard addSubview:_statusLabel];
-
     _openGameButton = [UIButton buttonWithType:UIButtonTypeSystem];
     _openGameButton.backgroundColor = VNAccent();
-    _openGameButton.layer.cornerRadius = 8.0f;
-    _openGameButton.titleLabel.font = VNFont(13, UIFontWeightSemibold);
+    _openGameButton.layer.cornerRadius = 12.0f;
+    _openGameButton.titleLabel.font = VNFont(13, UIFontWeightBold);
     [_openGameButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     [_openGameButton setTitle:@"Vào Game" forState:UIControlStateNormal];
     [_openGameButton addTarget:self action:@selector(openGameTapped:) forControlEvents:UIControlEventTouchUpInside];
     [_statusCard addSubview:_openGameButton];
 
-    // ============ SECTION: THÔNG TIN ============
-    _secInfo = VNMakeSectionHeader(@"Thông tin");
-    [_contentView addSubview:_secInfo];
-
+    // License + auth
     _licenseCard = [self makeCard];
     [_contentView addSubview:_licenseCard];
     _licenseTitleLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     _licenseTitleLabel.text = @"Giấy phép";
-    _licenseTitleLabel.font = VNFont(16, UIFontWeightRegular);
-    _licenseTitleLabel.textColor = VNText();
+    _licenseTitleLabel.font = VNFont(12, UIFontWeightMedium);
+    _licenseTitleLabel.textColor = VNMuted();
     [_licenseCard addSubview:_licenseTitleLabel];
     _licenseValueLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-    _licenseValueLabel.font = VNFont(15, UIFontWeightRegular);
-    _licenseValueLabel.textColor = VNMuted();
-    _licenseValueLabel.textAlignment = NSTextAlignmentRight;
+    _licenseValueLabel.font = VNFont(15, UIFontWeightSemibold);
+    _licenseValueLabel.textColor = VNText();
+    _licenseValueLabel.numberOfLines = 3;
     _licenseValueLabel.text = @"—";
     [_licenseCard addSubview:_licenseValueLabel];
 
@@ -842,96 +833,63 @@ static UIView *VNMakeRowSeparator(void) {
     [_contentView addSubview:_authCard];
     _authTitleLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     _authTitleLabel.text = @"Trạng thái";
-    _authTitleLabel.font = VNFont(16, UIFontWeightRegular);
-    _authTitleLabel.textColor = VNText();
+    _authTitleLabel.font = VNFont(12, UIFontWeightMedium);
+    _authTitleLabel.textColor = VNMuted();
     [_authCard addSubview:_authTitleLabel];
     _authValueLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-    _authValueLabel.font = VNFont(15, UIFontWeightRegular);
+    _authValueLabel.font = VNFont(16, UIFontWeightSemibold);
     _authValueLabel.textColor = VNAccent();
-    _authValueLabel.textAlignment = NSTextAlignmentRight;
+    _authValueLabel.numberOfLines = 2;
     _authValueLabel.text = @"—";
     [_authCard addSubview:_authValueLabel];
 
-    // ============ SECTION: KHÁC ============
-    _secExtra = VNMakeSectionHeader(@"Khác");
-    [_contentView addSubview:_secExtra];
+    // Support
+    _supportCard = [self makeCard];
+    [_contentView addSubview:_supportCard];
+    _supportTitleLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+    _supportTitleLabel.text = @"Liên hệ hỗ trợ";
+    _supportTitleLabel.font = VNFont(15, UIFontWeightSemibold);
+    _supportTitleLabel.textColor = VNText();
+    [_supportCard addSubview:_supportTitleLabel];
+    _supportSubtitleLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+    _supportSubtitleLabel.text = @"Nhấn Join để nhận hỗ trợ";
+    _supportSubtitleLabel.font = VNFont(12, UIFontWeightRegular);
+    _supportSubtitleLabel.textColor = VNMuted();
+    [_supportCard addSubview:_supportSubtitleLabel];
+    _joinButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    _joinButton.backgroundColor = VNAccent();
+    _joinButton.layer.cornerRadius = 12.0f;
+    _joinButton.titleLabel.font = VNFont(13, UIFontWeightBold);
+    [_joinButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    [_joinButton setTitle:@"Join" forState:UIControlStateNormal];
+    [_joinButton addTarget:self action:@selector(joinSupportTapped:) forControlEvents:UIControlEventTouchUpInside];
+    [_supportCard addSubview:_joinButton];
 
+    // Extra
     _extraCard = [self makeCard];
     [_contentView addSubview:_extraCard];
-
     _autoCleanLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-    _autoCleanLabel.text = @"VarClean trước khi bật HUD";
-    _autoCleanLabel.font = VNFont(16, UIFontWeightRegular);
+    _autoCleanLabel.text = @"VarClean before HUD";
+    _autoCleanLabel.font = VNFont(14, UIFontWeightMedium);
     _autoCleanLabel.textColor = VNText();
     [_extraCard addSubview:_autoCleanLabel];
-
     _autoCleanSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
     _autoCleanSwitch.onTintColor = VNAccent();
     _autoCleanSwitch.on = ESPPrefsBool(@"AutoVarCleanBeforeHUD", NO);
     [_autoCleanSwitch addTarget:self action:@selector(autoCleanSwitchChanged:) forControlEvents:UIControlEventValueChanged];
     [_extraCard addSubview:_autoCleanSwitch];
-
-    { UIView *sep = VNMakeRowSeparator(); sep.tag = 9501; [_extraCard addSubview:sep]; }
-
     _authorizationLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-    _authorizationLabel.text = @"Kích hoạt";
-    _authorizationLabel.font = VNFont(16, UIFontWeightRegular);
+    _authorizationLabel.font = VNFont(12, UIFontWeightMedium);
     _authorizationLabel.textColor = VNText();
     [_extraCard addSubview:_authorizationLabel];
-
     _authorizationButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    _authorizationButton.titleLabel.font = VNFont(15, UIFontWeightRegular);
-    _authorizationButton.contentHorizontalAlignment = UIControlContentHorizontalAlignmentRight;
+    _authorizationButton.titleLabel.font = VNFont(12, UIFontWeightSemibold);
     [_authorizationButton setTitleColor:VNAccent() forState:UIControlStateNormal];
     [_authorizationButton addTarget:self action:@selector(retryAuthorization:) forControlEvents:UIControlEventTouchUpInside];
     [_extraCard addSubview:_authorizationButton];
 
-    { UIView *sep = VNMakeRowSeparator(); sep.tag = 9502; [_extraCard addSubview:sep]; }
-
-    _supportTitleLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-    _supportTitleLabel.text = @"Liên hệ hỗ trợ";
-    _supportTitleLabel.font = VNFont(16, UIFontWeightRegular);
-    _supportTitleLabel.textColor = VNText();
-    [_extraCard addSubview:_supportTitleLabel];
-
-    _supportSubtitleLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-    _supportSubtitleLabel.text = @"Telegram";
-    _supportSubtitleLabel.font = VNFont(13, UIFontWeightRegular);
-    _supportSubtitleLabel.textColor = VNMuted();
-    [_extraCard addSubview:_supportSubtitleLabel];
-
-    _joinButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    _joinButton.backgroundColor = VNAccent();
-    _joinButton.layer.cornerRadius = 6.0f;
-    _joinButton.titleLabel.font = VNFont(13, UIFontWeightSemibold);
-    [_joinButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    [_joinButton setTitle:@"Join" forState:UIControlStateNormal];
-    [_joinButton addTarget:self action:@selector(joinSupportTapped:) forControlEvents:UIControlEventTouchUpInside];
-    [_extraCard addSubview:_joinButton];
-
-    // ============ SECTION: NHẬT KÝ ============
-    _secLog = VNMakeSectionHeader(@"Nhật ký");
-    [_contentView addSubview:_secLog];
-
-    _logCard = [self makeCard];
-    [_contentView addSubview:_logCard];
-    _logTextView = [[UITextView alloc] initWithFrame:CGRectZero];
-    _logTextView.editable = NO;
-    _logTextView.scrollEnabled = YES;
-    _logTextView.showsHorizontalScrollIndicator = NO;
-    _logTextView.backgroundColor = [UIColor colorWithWhite:0.97 alpha:1.0];
-    _logTextView.layer.cornerRadius = 8.0f;
-    _logTextView.layer.borderWidth = 1.0f;
-    _logTextView.layer.borderColor = VNLine().CGColor;
-    _logTextView.font = [UIFont monospacedSystemFontOfSize:10 weight:UIFontWeightRegular];
-    _logTextView.textColor = [UIColor colorWithRed:0.12 green:0.55 blue:0.22 alpha:1.0];
-    _logTextView.text = @"[VN TOOL] ready.\nPress Bắt đầu to boot kernel.";
-    [_logCard addSubview:_logTextView];
-
     [self applyTheme];
 }
-
-#pragma mark - Layout
 
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
@@ -940,221 +898,147 @@ static UIView *VNMakeRowSeparator(void) {
     CGFloat height = self.view.bounds.size.height;
     _scrollView.frame = self.view.bounds;
 
-    CGFloat gear = 32.0f;
-    CGFloat topY = insets.top + 8;
-    _closeBtn.frame = CGRectMake(insets.left + 16, topY, gear, gear);
-    _settingsBtn.frame = CGRectMake(width - insets.right - 16 - gear, topY, gear, gear);
-    _trashBtn.frame = CGRectMake(CGRectGetMinX(_settingsBtn.frame) - 8 - gear, topY, gear, gear);
+    CGFloat gear = 36.0f;
+    _closeBtn.frame = CGRectMake(insets.left + 16, insets.top + 8, gear, gear);
+    _settingsBtn.frame = CGRectMake(width - insets.right - 16 - gear, insets.top + 8, gear, gear);
+    _trashBtn.frame = CGRectMake(CGRectGetMinX(_settingsBtn.frame) - 10 - gear, insets.top + 8, gear, gear);
 
+    CGFloat contentW = width;
     CGFloat xPad = 16.0f;
-    CGFloat cardW = width - xPad * 2.0f;
-    CGFloat y = insets.top + 12;
+    CGFloat cardW = contentW - xPad * 2.0f;
+    CGFloat y = insets.top + 52.0f;
 
-    _titleLabel.frame = CGRectMake(xPad, y, 200, 26);
-    _subtitleLabel.frame = CGRectMake(xPad, y + 26, 200, 16);
-    y = y + 26 + 16 + 18;
+    CGFloat titleX = CGRectGetMaxX(_closeBtn.frame) + 12;
+    CGFloat titleRight = CGRectGetMinX(_trashBtn.frame) - 12;
+    CGFloat titleW = titleRight - titleX;
+    if (titleW < 80) titleW = 80;
+    _titleLabel.frame = CGRectMake(titleX, y, titleW, 40);
+    y = CGRectGetMaxY(_titleLabel.frame) + 14;
 
-    CGFloat sectionHeaderH = 20;
-    CGFloat rowH = 52;
-    CGFloat sepInset = 16;
-
-    // ===== CONTROL =====
-    _secControl.frame = CGRectMake(xPad + 4, y, cardW - 8, sectionHeaderH);
-    y = CGRectGetMaxY(_secControl.frame) + 6;
-
-    CGFloat controlRow1H = 72;
-    CGFloat controlRow2H = 48;
-    CGFloat controlH = controlRow1H + 1 + controlRow2H;
+    // Control card
+    CGFloat controlH = 92.0f;
     _controlCard.frame = CGRectMake(xPad, y, cardW, controlH);
+    CGFloat iconSize = MIN(kMenuButtonSize, MIN(cardW * 0.42f, controlH * 0.85f));
+    iconSize = MAX(48.0f, iconSize);
+    _controlIconView.frame = CGRectMake(14, (controlH - iconSize) * 0.5f, iconSize, iconSize);
+    _startButton.frame = CGRectMake(cardW - 108, 18, 94, 32);
+    _killAllButton.frame = CGRectMake(cardW - 108, 54, 94, 28);
+    CGFloat textX = 80;
+    CGFloat textW = cardW - 108 - textX - 8;
+    _controlTitleLabel.frame = CGRectMake(textX, 20, textW, 22);
+    _controlSubtitleLabel.frame = CGRectMake(textX, 44, textW, 28);
+    y = CGRectGetMaxY(_controlCard.frame) + 12;
 
-    CGFloat iconSize = 44;
-    _controlIconView.frame = CGRectMake(16, (controlRow1H - iconSize) * 0.5f, iconSize, iconSize);
+    // Toggles
+    CGFloat togglesH = 216.0f;
+    _togglesCard.frame = CGRectMake(xPad, y, cardW, togglesH);
+    _aimbotLabel.frame = CGRectMake(16, 14, 200, 24);
+    _aimbotSwitch.frame = CGRectMake(cardW - 68, 10, 51, 31);
+    _silentAimLabel.frame = CGRectMake(16, 54, 200, 24);
+    _silentAimSwitch.frame = CGRectMake(cardW - 68, 50, 51, 31);
+    _espLabel.frame = CGRectMake(16, 94, 200, 24);
+    _espSwitch.frame = CGRectMake(cardW - 68, 90, 51, 31);
+    _camLabel.frame = CGRectMake(16, 134, 200, 24);
+    _camSwitch.frame = CGRectMake(cardW - 68, 130, 51, 31);
+    _camSlider.frame = CGRectMake(16, 168, cardW - 90, 30);
+    _camValueLabel.frame = CGRectMake(cardW - 64, 170, 48, 24);
+    y = CGRectGetMaxY(_togglesCard.frame) + 12;
 
-    _controlTitleLabel.frame = CGRectMake(iconSize + 16 + 12, 14, cardW - iconSize - 16 - 12 - 110, 22);
-    _controlSubtitleLabel.frame = CGRectMake(iconSize + 16 + 12, 38, cardW - iconSize - 16 - 12 - 110, 18);
-
-    CGFloat btnW = 92;
-    _startButton.frame = CGRectMake(cardW - btnW - 16, (controlRow1H - 34) * 0.5f, btnW, 34);
-
-    UIView *sep1 = [_controlCard viewWithTag:9101];
-    sep1.frame = CGRectMake(sepInset, controlRow1H, cardW - sepInset, 0.5);
-
-    _killAllButton.frame = CGRectMake(16, controlRow1H + 1, cardW - 32, controlRow2H);
-    y = CGRectGetMaxY(_controlCard.frame) + 24;
-
-    // ===== ESP =====
-    _secDraw.frame = CGRectMake(xPad + 4, y, cardW - 8, sectionHeaderH);
-    y = CGRectGetMaxY(_secDraw.frame) + 6;
-
-    NSUInteger espRowCount = 5;
-    CGFloat espLabelRowH = rowH * espRowCount;
-    CGFloat espDistRowH = 92;
-    CGFloat espH = espLabelRowH + espDistRowH;
+    // ESP ELEMENTS
+    CGFloat espH = 20 + 12 + 5 * 40 + 70;
     _espCard.frame = CGRectMake(xPad, y, cardW, espH);
+    _espCardTitle.frame = CGRectMake(16, 12, cardW - 32, 16);
 
-    NSArray<UILabel *> *espLabelsArr = @[_espBoxLabel, _espLineLabel, _espBoneLabel,
-                                          _espHealthLabel, _espCountLabel];
-    NSArray<UISwitch *> *espSwitchesArr = @[_espBoxSwitch, _espLineSwitch, _espBoneSwitch,
-                                             _espHealthSwitch, _espCountSwitch];
-    for (NSUInteger i = 0; i < espRowCount; i++) {
-        CGFloat ry = i * rowH;
-        UILabel *l = espLabelsArr[i];
-        UISwitch *s = espSwitchesArr[i];
-        l.frame = CGRectMake(16, ry, cardW - 90, rowH);
-        CGSize sw = s.intrinsicContentSize;
-        s.frame = CGRectMake(cardW - sw.width - 16, ry + (rowH - sw.height) * 0.5f, sw.width, sw.height);
-
-        UIView *sep = [_espCard viewWithTag:9200 + i];
-        sep.frame = CGRectMake(sepInset, ry + rowH, cardW - sepInset, 0.5);
+    CGFloat rowY = 32;
+    NSArray *rowSwitches = @[_espBoxSwitch, _espLineSwitch, _espBoneSwitch,
+                              _espHealthSwitch, _espCountSwitch];
+    NSArray *rowLabels = @[_espBoxLabel, _espLineLabel, _espBoneLabel,
+                            _espHealthLabel, _espCountLabel];
+    for (NSUInteger i = 0; i < rowSwitches.count; i++) {
+        UILabel *l = rowLabels[i];
+        UISwitch *s = rowSwitches[i];
+        l.frame = CGRectMake(16, rowY + 4, cardW - 100, 24);
+        s.frame = CGRectMake(cardW - 68, rowY, 51, 31);
+        rowY += 40;
     }
+    _espDistanceLimitLabel.frame = CGRectMake(16, rowY + 4, cardW - 100, 24);
+    _espDistanceLimitValueLabel.frame = CGRectMake(cardW - 64, rowY + 4, 48, 24);
+    _espDistanceLimitSlider.frame = CGRectMake(16, rowY + 32, cardW - 32, 30);
+    y = CGRectGetMaxY(_espCard.frame) + 12;
 
-    UIView *sepLast = [_espCard viewWithTag:9210];
-    sepLast.frame = CGRectMake(sepInset, espLabelRowH, cardW - sepInset, 0.5);
-
-    CGFloat distY = espLabelRowH + 1;
-    _espDistanceLimitLabel.frame = CGRectMake(16, distY + 12, cardW - 120, 24);
-    _espDistanceLimitValueLabel.frame = CGRectMake(cardW - 100, distY + 12, 84, 24);
-    _espDistanceLimitSlider.frame = CGRectMake(16, distY + 46, cardW - 32, 30);
-    y = CGRectGetMaxY(_espCard.frame) + 24;
-
-    // ===== AIM =====
-    _secAim.frame = CGRectMake(xPad + 4, y, cardW - 8, sectionHeaderH);
-    y = CGRectGetMaxY(_secAim.frame) + 6;
-
-    CGFloat aimH = 52*3 + 80 + 84 + 84;
+    // Aimbot
+    CGFloat aimH = 254.0f;
     _aimCard.frame = CGRectMake(xPad, y, cardW, aimH);
+    _fovLabel.frame = CGRectMake(16, 14, 120, 20);
+    _fovValueLabel.frame = CGRectMake(cardW - 64, 14, 48, 20);
+    _fovSlider.frame = CGRectMake(16, 38, cardW - 32, 30);
+    _triggerLabel.frame = CGRectMake(16, 78, 120, 20);
+    _triggerSegment.frame = CGRectMake(16, 100, cardW - 32, 32);
+    _aimPosLabel.frame = CGRectMake(16, 142, 120, 20);
+    _aimPosSegment.frame = CGRectMake(16, 164, cardW - 32, 32);
+    _aimBehindWallLabel.frame = CGRectMake(16, 214, 220, 24);
+    _aimBehindWallSwitch.frame = CGRectMake(cardW - 68, 210, 51, 31);
+    y = CGRectGetMaxY(_aimCard.frame) + 12;
 
-    CGFloat aimY = 0;
-    _aimbotLabel.frame = CGRectMake(16, aimY, cardW - 90, 52);
-    { CGSize sw = _aimbotSwitch.intrinsicContentSize;
-      _aimbotSwitch.frame = CGRectMake(cardW - sw.width - 16, aimY + (52 - sw.height)*0.5f, sw.width, sw.height); }
-    UIView *aimSep1 = [_aimCard viewWithTag:9301];
-    aimSep1.frame = CGRectMake(sepInset, aimY + 52, cardW - sepInset, 0.5);
-    aimY += 53;
+    // Log
+    CGFloat logH = 210.0f;
+    _logCard.frame = CGRectMake(xPad, y, cardW, logH);
+    _logTextView.frame = CGRectMake(10, 8, cardW - 20, logH - 16);
+    y = CGRectGetMaxY(_logCard.frame) + 16;
 
-    _silentAimLabel.frame = CGRectMake(16, aimY, cardW - 90, 52);
-    { CGSize sw = _silentAimSwitch.intrinsicContentSize;
-      _silentAimSwitch.frame = CGRectMake(cardW - sw.width - 16, aimY + (52 - sw.height)*0.5f, sw.width, sw.height); }
-    UIView *aimSep2 = [_aimCard viewWithTag:9302];
-    aimSep2.frame = CGRectMake(sepInset, aimY + 52, cardW - sepInset, 0.5);
-    aimY += 53;
+    _versionSectionLabel.frame = CGRectMake(xPad + 4, y, cardW - 8, 20);
+    y = CGRectGetMaxY(_versionSectionLabel.frame) + 10;
 
-    _aimBehindWallLabel.frame = CGRectMake(16, aimY, cardW - 90, 52);
-    { CGSize sw = _aimBehindWallSwitch.intrinsicContentSize;
-      _aimBehindWallSwitch.frame = CGRectMake(cardW - sw.width - 16, aimY + (52 - sw.height)*0.5f, sw.width, sw.height); }
-    UIView *aimSep3 = [_aimCard viewWithTag:9303];
-    aimSep3.frame = CGRectMake(sepInset, aimY + 52, cardW - sepInset, 0.5);
-    aimY += 53;
-
-    _fovLabel.frame = CGRectMake(16, aimY + 12, 120, 22);
-    _fovValueLabel.frame = CGRectMake(cardW - 100, aimY + 12, 84, 22);
-    _fovSlider.frame = CGRectMake(16, aimY + 42, cardW - 32, 30);
-    UIView *aimSep4 = [_aimCard viewWithTag:9304];
-    aimSep4.frame = CGRectMake(sepInset, aimY + 80, cardW - sepInset, 0.5);
-    aimY += 81;
-
-    _triggerLabel.frame = CGRectMake(16, aimY + 10, 120, 22);
-    _triggerSegment.frame = CGRectMake(16, aimY + 38, cardW - 32, 32);
-    UIView *aimSep5 = [_aimCard viewWithTag:9305];
-    aimSep5.frame = CGRectMake(sepInset, aimY + 84, cardW - sepInset, 0.5);
-    aimY += 85;
-
-    _aimPosLabel.frame = CGRectMake(16, aimY + 10, 120, 22);
-    _aimPosSegment.frame = CGRectMake(16, aimY + 38, cardW - 32, 32);
-    y = CGRectGetMaxY(_aimCard.frame) + 24;
-
-    // ===== CAMERA =====
-    _secCamera.frame = CGRectMake(xPad + 4, y, cardW - 8, sectionHeaderH);
-    y = CGRectGetMaxY(_secCamera.frame) + 6;
-
-    CGFloat camH = 52 + 1 + 80;
-    _togglesCard.frame = CGRectMake(xPad, y, cardW, camH);
-    _camLabel.frame = CGRectMake(16, 0, cardW - 90, 52);
-    { CGSize sw = _camSwitch.intrinsicContentSize;
-      _camSwitch.frame = CGRectMake(cardW - sw.width - 16, (52 - sw.height)*0.5f, sw.width, sw.height); }
-    UIView *camSep = [_togglesCard viewWithTag:9401];
-    camSep.frame = CGRectMake(sepInset, 52, cardW - sepInset, 0.5);
-
-    _camValueStaticLabel.frame = CGRectMake(16, 53 + 12, 120, 22);
-    _camValueLabel.frame = CGRectMake(cardW - 100, 53 + 12, 84, 22);
-    _camSlider.frame = CGRectMake(16, 53 + 42, cardW - 32, 30);
-    y = CGRectGetMaxY(_togglesCard.frame) + 24;
-
-    // ===== VERSION =====
-    _secVersion.frame = CGRectMake(xPad + 4, y, cardW - 8, sectionHeaderH);
-    y = CGRectGetMaxY(_secVersion.frame) + 6;
-
-    CGFloat gap = 12;
+    CGFloat gap = 12.0f;
     CGFloat versionW = (cardW - gap) * 0.5f;
-    CGFloat versionH = 120;
+    CGFloat versionH = 128.0f;
     _ffMaxCard.frame = CGRectMake(xPad, y, versionW, versionH);
     _ffCard.frame = CGRectMake(xPad + versionW + gap, y, versionW, versionH);
-    CGFloat iconSide = 56;
+    CGFloat iconSide = 64.0f;
     _ffMaxIconView.frame = CGRectMake((versionW - iconSide) * 0.5f, 18, iconSide, iconSide);
     _ffIconView.frame = CGRectMake((versionW - iconSide) * 0.5f, 18, iconSide, iconSide);
-    _ffMaxNameLabel.frame = CGRectMake(8, 82, versionW - 16, 22);
-    _ffNameLabel.frame = CGRectMake(8, 82, versionW - 16, 22);
-    y = CGRectGetMaxY(_ffMaxCard.frame) + 24;
+    _ffMaxNameLabel.frame = CGRectMake(8, 90, versionW - 16, 24);
+    _ffNameLabel.frame = CGRectMake(8, 90, versionW - 16, 24);
+    y = CGRectGetMaxY(_ffMaxCard.frame) + 14;
 
-    // ===== STATUS =====
-    _secStatus.frame = CGRectMake(xPad + 4, y, cardW - 8, sectionHeaderH);
-    y = CGRectGetMaxY(_secStatus.frame) + 6;
-
-    CGFloat statusH = 64;
+    // Status
+    CGFloat statusH = 64.0f;
     _statusCard.frame = CGRectMake(xPad, y, cardW, statusH);
-    _statusDot.frame = CGRectMake(16, (statusH - 10)*0.5f, 10, 10);
-    _openGameButton.frame = CGRectMake(cardW - 108, (statusH - 34)*0.5f, 92, 34);
-    _statusLabel.frame = CGRectMake(36, 0, cardW - 108 - 44, statusH);
-    y = CGRectGetMaxY(_statusCard.frame) + 24;
+    _statusDot.frame = CGRectMake(16, 27, 10, 10);
+    _openGameButton.frame = CGRectMake(cardW - 112, 15, 98, 34);
+    _statusLabel.frame = CGRectMake(36, 18, cardW - 112 - 44, 28);
+    y = CGRectGetMaxY(_statusCard.frame) + 12;
 
-    // ===== INFO =====
-    _secInfo.frame = CGRectMake(xPad + 4, y, cardW - 8, sectionHeaderH);
-    y = CGRectGetMaxY(_secInfo.frame) + 6;
+    // License / auth
+    CGFloat halfW = (cardW - gap) * 0.5f;
+    CGFloat halfH = 92.0f;
+    _licenseCard.frame = CGRectMake(xPad, y, halfW, halfH);
+    _authCard.frame = CGRectMake(xPad + halfW + gap, y, halfW, halfH);
+    _licenseTitleLabel.frame = CGRectMake(14, 12, halfW - 28, 18);
+    _licenseValueLabel.frame = CGRectMake(14, 36, halfW - 28, 46);
+    _authTitleLabel.frame = CGRectMake(14, 12, halfW - 28, 18);
+    _authValueLabel.frame = CGRectMake(14, 40, halfW - 28, 36);
+    y = CGRectGetMaxY(_licenseCard.frame) + 12;
 
-    CGFloat infoH = 52;
-    _licenseCard.frame = CGRectMake(xPad, y, cardW, infoH);
-    _licenseTitleLabel.frame = CGRectMake(16, 0, cardW/2, infoH);
-    _licenseValueLabel.frame = CGRectMake(cardW/2, 0, cardW/2 - 16, infoH);
-    y = CGRectGetMaxY(_licenseCard.frame) + 1;
+    // Support
+    CGFloat supportH = 72.0f;
+    _supportCard.frame = CGRectMake(xPad, y, cardW, supportH);
+    _joinButton.frame = CGRectMake(cardW - 92, 19, 78, 34);
+    _supportTitleLabel.frame = CGRectMake(16, 16, cardW - 120, 22);
+    _supportSubtitleLabel.frame = CGRectMake(16, 40, cardW - 120, 18);
+    y = CGRectGetMaxY(_supportCard.frame) + 12;
 
-    _authCard.frame = CGRectMake(xPad, y, cardW, infoH);
-    _authTitleLabel.frame = CGRectMake(16, 0, cardW/2, infoH);
-    _authValueLabel.frame = CGRectMake(cardW/2, 0, cardW/2 - 16, infoH);
-    y = CGRectGetMaxY(_authCard.frame) + 24;
-
-    // ===== EXTRA =====
-    _secExtra.frame = CGRectMake(xPad + 4, y, cardW - 8, sectionHeaderH);
-    y = CGRectGetMaxY(_secExtra.frame) + 6;
-
-    CGFloat extraH = 52 + 1 + 52 + 1 + 72;
+    // Extra
+    CGFloat extraH = 96.0f;
     _extraCard.frame = CGRectMake(xPad, y, cardW, extraH);
+    _autoCleanLabel.frame = CGRectMake(16, 16, cardW - 90, 22);
+    CGSize sw = _autoCleanSwitch.intrinsicContentSize;
+    _autoCleanSwitch.frame = CGRectMake(cardW - sw.width - 16, 14, sw.width, sw.height);
+    _authorizationLabel.frame = CGRectMake(16, 52, cardW - 150, 28);
+    _authorizationButton.frame = CGRectMake(cardW - 132, 52, 116, 28);
+    y = CGRectGetMaxY(_extraCard.frame) + 24 + insets.bottom;
 
-    _autoCleanLabel.frame = CGRectMake(16, 0, cardW - 90, 52);
-    { CGSize sw = _autoCleanSwitch.intrinsicContentSize;
-      _autoCleanSwitch.frame = CGRectMake(cardW - sw.width - 16, (52 - sw.height)*0.5f, sw.width, sw.height); }
-    UIView *exSep1 = [_extraCard viewWithTag:9501];
-    exSep1.frame = CGRectMake(sepInset, 52, cardW - sepInset, 0.5);
-
-    _authorizationLabel.frame = CGRectMake(16, 53, cardW/2, 52);
-    _authorizationButton.frame = CGRectMake(cardW/2, 53, cardW/2 - 16, 52);
-    UIView *exSep2 = [_extraCard viewWithTag:9502];
-    exSep2.frame = CGRectMake(sepInset, 105, cardW - sepInset, 0.5);
-
-    _supportTitleLabel.frame = CGRectMake(16, 106 + 12, cardW - 120, 22);
-    _supportSubtitleLabel.frame = CGRectMake(16, 106 + 36, cardW - 120, 18);
-    _joinButton.frame = CGRectMake(cardW - 84, 106 + (72 - 32)*0.5f, 68, 32);
-    y = CGRectGetMaxY(_extraCard.frame) + 24;
-
-    // ===== LOG =====
-    _secLog.frame = CGRectMake(xPad + 4, y, cardW - 8, sectionHeaderH);
-    y = CGRectGetMaxY(_secLog.frame) + 6;
-
-    CGFloat logH = 180;
-    _logCard.frame = CGRectMake(xPad, y, cardW, logH);
-    _logTextView.frame = CGRectMake(8, 8, cardW - 16, logH - 16);
-    y = CGRectGetMaxY(_logCard.frame) + 24 + insets.bottom;
-
-    _contentView.frame = CGRectMake(0, 0, width, MAX(y, height));
+    _contentView.frame = CGRectMake(0, 0, contentW, MAX(y, height));
     _scrollView.contentSize = _contentView.bounds.size;
 }
 
@@ -1171,16 +1055,19 @@ static UIView *VNMakeRowSeparator(void) {
 - (void)updateVersionSelectionUI {
     BOOL isMax = GameTargetIsMax();
     UIColor *selected = VNAccent();
+
     _ffMaxCard.layer.borderWidth = 2.0f;
     _ffCard.layer.borderWidth = 2.0f;
     _ffMaxCard.layer.borderColor = (isMax ? selected : [UIColor clearColor]).CGColor;
     _ffCard.layer.borderColor = (!isMax ? selected : [UIColor clearColor]).CGColor;
+    _ffMaxCard.backgroundColor = isMax ? VNPanel2() : VNCard();
+    _ffCard.backgroundColor = !isMax ? VNPanel2() : VNCard();
 
     UIImage *icon = [self imageNamedWebPOrPNG:isMax ? @"ffmax" : @"ff"];
     if (icon) _controlIconView.image = icon;
 }
 
-#pragma mark - Lifecycle
+#pragma mark - App lifecycle
 
 - (void)appBecameActive {
     GameOffsetsReload();
@@ -1191,7 +1078,9 @@ static UIView *VNMakeRowSeparator(void) {
 
 #pragma mark - HUD / game
 
-- (BOOL)isGameRunning { return GameTargetIsRunning(); }
+- (BOOL)isGameRunning {
+    return GameTargetIsRunning();
+}
 
 - (void)startPollingGameState {
     __weak __typeof(self) weakSelf = self;
@@ -1202,39 +1091,71 @@ static UIView *VNMakeRowSeparator(void) {
     }];
 }
 
-- (void)autoCleanSwitchChanged:(UISwitch *)sender { ESPPrefsSetBool(@"AutoVarCleanBeforeHUD", sender.on); }
+- (void)autoCleanSwitchChanged:(UISwitch *)sender {
+    ESPPrefsSetBool(@"AutoVarCleanBeforeHUD", sender.on);
+}
 
-- (void)aimbotSwitchChanged:(UISwitch *)sender { ESPPrefsSetBoolLive(@"Aimbot", sender.on); ESPSyncFromPrefs(); }
+- (void)aimbotSwitchChanged:(UISwitch *)sender {
+    ESPPrefsSetBoolLive(@"Aimbot", sender.on);
+    ESPSyncFromPrefs();
+}
+
 - (void)silentAimSwitchChanged:(UISwitch *)sender {
     ESPPrefsSetBoolLive(@"AimSilent", sender.on);
     ESPSyncFromPrefs();
     NSLog(@"[VN] AimSilent set to %d", (int)sender.on);
 }
-- (void)espSwitchChanged:(UISwitch *)sender { ESPPrefsSetBoolLive(@"EnableESP", sender.on); ESPSyncFromPrefs(); }
-- (void)camSwitchChanged:(UISwitch *)sender { ESPPrefsSetBoolLive(@"CamPC", sender.on); ESPSyncFromPrefs(); }
+
+- (void)espSwitchChanged:(UISwitch *)sender {
+    ESPPrefsSetBoolLive(@"EnableESP", sender.on);
+    ESPSyncFromPrefs();
+}
+
+- (void)camSwitchChanged:(UISwitch *)sender {
+    ESPPrefsSetBoolLive(@"CamPC", sender.on);
+    ESPSyncFromPrefs();
+}
+
 - (void)camSliderChanged:(UISlider *)sender {
     float v = sender.value;
     _camValueLabel.text = [NSString stringWithFormat:@"%.0f", v];
     ESPPrefsSetFloatLive(@"CamPCValue", v);
 }
+
 - (void)fovSliderChanged:(UISlider *)sender {
     float v = sender.value;
     _fovValueLabel.text = [NSString stringWithFormat:@"%.0f", v];
     ESPPrefsSetFloatLive(@"Fov", v);
 }
 
-#pragma mark - ESP toggles
-- (void)espBoxChanged:(UISwitch *)sender { ESPPrefsSetBoolLive(@"Box", sender.on); ESPSyncFromPrefs(); }
-- (void)espLineChanged:(UISwitch *)sender { ESPPrefsSetBoolLive(@"Line", sender.on); ESPSyncFromPrefs(); }
-- (void)espBoneChanged:(UISwitch *)sender { ESPPrefsSetBoolLive(@"Bone", sender.on); ESPSyncFromPrefs(); }
-- (void)espHealthChanged:(UISwitch *)sender { ESPPrefsSetBoolLive(@"Health", sender.on); ESPSyncFromPrefs(); }
-- (void)espCountChanged:(UISwitch *)sender { ESPPrefsSetBoolLive(@"Count", sender.on); ESPSyncFromPrefs(); }
+#pragma mark - ESP element toggles
+- (void)espBoxChanged:(UISwitch *)sender {
+    ESPPrefsSetBoolLive(@"Box", sender.on);
+    ESPSyncFromPrefs();
+}
+- (void)espLineChanged:(UISwitch *)sender {
+    ESPPrefsSetBoolLive(@"Line", sender.on);
+    ESPSyncFromPrefs();
+}
+- (void)espBoneChanged:(UISwitch *)sender {
+    ESPPrefsSetBoolLive(@"Bone", sender.on);
+    ESPSyncFromPrefs();
+}
+- (void)espHealthChanged:(UISwitch *)sender {
+    ESPPrefsSetBoolLive(@"Health", sender.on);
+    ESPSyncFromPrefs();
+}
+- (void)espCountChanged:(UISwitch *)sender {
+    ESPPrefsSetBoolLive(@"Count", sender.on);
+    ESPSyncFromPrefs();
+}
 
 - (void)espDistanceLimitChanged:(UISlider *)sender {
     float v = sender.value;
-    _espDistanceLimitValueLabel.text = [NSString stringWithFormat:@"%.0f m", v];
+    _espDistanceLimitValueLabel.text = [NSString stringWithFormat:@"%.0f", v];
     ESPPrefsSetFloatLive(@"EspDistanceLimit", v);
 }
+
 - (void)espDistanceLimitCommitted:(UISlider *)sender {
     ESPPrefsSetFloat(@"EspDistanceLimit", sender.value);
     ESPSyncFromPrefs();
@@ -1248,7 +1169,9 @@ static UIView *VNMakeRowSeparator(void) {
     [std synchronize];
     ESPPrefsSetFloat(@"TriggerMode", v);
     ESPSyncFromPrefs();
+    NSLog(@"[VN] TriggerMode set to %.0f", v);
 }
+
 - (void)aimPosSegmentChanged:(UISegmentedControl *)sender {
     float v = (float)sender.selectedSegmentIndex;
     NSUserDefaults *std = [NSUserDefaults standardUserDefaults];
@@ -1257,7 +1180,9 @@ static UIView *VNMakeRowSeparator(void) {
     [std synchronize];
     ESPPrefsSetFloat(@"AimPos", v);
     ESPSyncFromPrefs();
+    NSLog(@"[VN] AimPos set to %.0f", v);
 }
+
 - (void)aimBehindWallSwitchChanged:(UISwitch *)sender {
     ESPPrefsSetBoolLive(@"AimBehindWall", sender.on);
     ESPSyncFromPrefs();
@@ -1268,18 +1193,11 @@ static UIView *VNMakeRowSeparator(void) {
 - (void)startButtonTapped:(UIButton *)sender {
     (void)sender;
     BOOL hudOn = IsHUDEnabled();
-    NSLog(@"[VN-DEBUG] startButton tapped. hudOn(before)=%d", hudOn);
-
     if (hudOn) {
         ++_hudRequestSerial;
         _pendingHUDEnableUntil = 0;
         SetHUDEnabled(NO);
-        NSLog(@"[VN-DEBUG] SetHUDEnabled(NO). hudOn(after)=%d", IsHUDEnabled());
         [self refreshHUDState];
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)),
-                       dispatch_get_main_queue(), ^{
-            [self refreshHUDState];
-        });
         return;
     }
 
@@ -1317,13 +1235,17 @@ static UIView *VNMakeRowSeparator(void) {
     });
 }
 
+// Nút Tắt hết: tắt HUD, tắt mọi switch ESP/Aimbot, reset UI
 - (void)killAllTapped:(id)sender {
     (void)sender;
+
     ++_hudRequestSerial;
     _pendingHUDEnableUntil = 0;
 
+    // 1. Tắt HUD + kernel view
     SetHUDEnabled(NO);
 
+    // 2. Tắt toàn bộ toggle trong prefs
     ESPPrefsSetBoolLive(@"Aimbot", NO);
     ESPPrefsSetBoolLive(@"AimSilent", NO);
     ESPPrefsSetBoolLive(@"EnableESP", NO);
@@ -1337,6 +1259,7 @@ static UIView *VNMakeRowSeparator(void) {
 
     ESPSyncFromPrefs();
 
+    // 3. Cập nhật switch UI
     dispatch_async(dispatch_get_main_queue(), ^{
         [self.aimbotSwitch setOn:NO animated:YES];
         [self.silentAimSwitch setOn:NO animated:YES];
@@ -1361,17 +1284,23 @@ static UIView *VNMakeRowSeparator(void) {
     NSString *bundleId = GameTargetIsMax() ? @"com.dts.freefiremax" : @"vn.vng.freefireth";
     NSURL *url = [NSURL URLWithString:[NSString stringWithFormat:@"%@://", bundleId]];
     UIApplication *app = [UIApplication sharedApplication];
-    if ([app canOpenURL:url]) { [app openURL:url options:@{} completionHandler:nil]; return; }
+    if ([app canOpenURL:url]) {
+        [app openURL:url options:@{} completionHandler:nil];
+        return;
+    }
     NSArray<NSString *> *fallbacks = GameTargetIsMax()
         ? @[ @"freefiremax://", @"ffmax://" ]
         : @[ @"freefireth://", @"freefire://" ];
     for (NSString *scheme in fallbacks) {
         NSURL *u = [NSURL URLWithString:scheme];
-        if ([app canOpenURL:u]) { [app openURL:u options:@{} completionHandler:nil]; return; }
+        if ([app canOpenURL:u]) {
+            [app openURL:u options:@{} completionHandler:nil];
+            return;
+        }
     }
     UIAlertController *alert =
         [UIAlertController alertControllerWithTitle:@"Không mở được game"
-                                            message:@"Hãy mở Free Fire / Free Fire MAX thủ công."
+                                            message:@"Hãy mở Free Fire / Free Fire MAX thủ công, rồi quay lại nhấn Bắt đầu."
                                      preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
     [self presentViewController:alert animated:YES completion:nil];
@@ -1420,41 +1349,41 @@ static void HomeVCBootLogSink(NSString *line) {
     if (gameIsRunning) {
         _statusDot.backgroundColor = VNAccent();
         NSString *name = GameTargetIsMax() ? @"Free Fire MAX" : @"Free Fire";
-        _statusLabel.text = [NSString stringWithFormat:@"%@ đang chạy", name];
+        _statusLabel.text = [NSString stringWithFormat:@"Trạng thái · %@ đang chạy", name];
     } else {
         _statusDot.backgroundColor = VNRed();
-        _statusLabel.text = @"Game chưa chạy";
+        _statusLabel.text = @"Trạng thái · Game chưa chạy";
     }
 
     if (!gameIsAvailable) {
         [_startButton setTitle:@"Bắt đầu" forState:UIControlStateNormal];
         _startButton.enabled = YES;
-        _startButton.backgroundColor = VNAccent();
-        _controlSubtitleLabel.text = @"Nhấn Bắt đầu khi game đã mở";
+        _startButton.alpha = 1.0;
+        _controlSubtitleLabel.alpha = 1.0;
         _pendingHUDEnableUntil = 0;
+        _startButton.backgroundColor = VNAccent();
         return;
     }
 
     _startButton.enabled = YES;
+    _startButton.alpha = 1.0;
+    _controlSubtitleLabel.alpha = 1.0;
 
     CFTimeInterval now = CACurrentMediaTime();
     BOOL isWithinEnableGracePeriod = _pendingHUDEnableUntil > 0 && now < _pendingHUDEnableUntil;
     if (!hudIsEnabled && isWithinEnableGracePeriod) {
         [_startButton setTitle:@"Đang bật…" forState:UIControlStateNormal];
         _startButton.backgroundColor = VNAccentDim();
-        _controlSubtitleLabel.text = @"Đang khởi động kernel…";
         return;
     }
 
     if (hudIsEnabled) {
         _pendingHUDEnableUntil = 0;
         [_startButton setTitle:@"Tắt HUD" forState:UIControlStateNormal];
-        _startButton.backgroundColor = VNRed();
-        _controlSubtitleLabel.text = @"HUD đang hoạt động";
+        _startButton.backgroundColor = VNPanel2();
     } else {
         [_startButton setTitle:@"Bắt đầu" forState:UIControlStateNormal];
         _startButton.backgroundColor = VNAccent();
-        _controlSubtitleLabel.text = @"Nhấn Bắt đầu khi game đã mở";
     }
 }
 
