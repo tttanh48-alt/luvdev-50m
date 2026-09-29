@@ -159,7 +159,13 @@ static void ESPPrefsLoadIfNeeded(void) {
             @"EspDistanceLimit", @"Norecoil", @"BrutalSpeed", @"FloatingPanelX", @"FloatingPanelY", @"MenuLastTab",
             @"CustomName", @"SetName",
             @"CustomToggleBtnX", @"CustomToggleBtnY", @"CustomToggleBtnState",
-            @"SelectedGameId"
+            @"SelectedGameId",
+            @"BoxThickness", @"BoneThickness", @"LineThickness", @"FovThickness", @"AimAssistThickness",
+            @"BoxColorMode", @"BoxColorR", @"BoxColorG", @"BoxColorB",
+            @"BoneColorMode", @"BoneColorR", @"BoneColorG", @"BoneColorB",
+            @"LineColorMode", @"LineColorR", @"LineColorG", @"LineColorB",
+            @"FovColorMode", @"FovColorR", @"FovColorG", @"FovColorB",
+            @"AimAssistColorR", @"AimAssistColorG", @"AimAssistColorB"
         ];
         NSUserDefaults *std = [NSUserDefaults standardUserDefaults];
         for (NSString *key in seedKeys) {
@@ -197,6 +203,7 @@ static BOOL IsGlobalKey(NSString *key) {
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
         globalKeys = [NSSet setWithArray:@[
+            // ---- UI / app chrome ----
             @"MenuLayoutStyle",
             @"AppLanguageIsEnglish",
             @"AppLanguage",
@@ -209,7 +216,7 @@ static BOOL IsGlobalKey(NSString *key) {
             @"AppAccentColorMode",
             @"EnableHaptic",
             @"StreamerMode",
-                        @"SpeedX50",
+            @"SpeedX50",
             @"Speed",
             @"SpeedValue",
             @"FastReload",
@@ -240,7 +247,47 @@ static BOOL IsGlobalKey(NSString *key) {
             @"CustomToggleBtnX",
             @"CustomToggleBtnY",
             @"CustomToggleBtnState",
-            @"SelectedGameId"
+            @"SelectedGameId",
+
+            // ---- Aim / trigger / ESP. These were missing from the global set,
+            // which meant ResolveKey appended "_Lite" whenever the menu layout
+            // was set to Lite. Trigger and AimPos then read the default 0
+            // (Auto / Head) instead of what the user picked, which is why
+            // Fire and Scope appeared to do nothing. Adding them here pins
+            // one key name regardless of which layout is active. ----
+            @"TriggerMode",
+            @"AimPos",
+            @"AimTargetMode",
+            @"AimSphereMode",
+            @"AimMode",
+            @"Fov",
+            @"AimDistance",
+            @"AimSpeed",
+            @"AimOnBot",
+            @"AimIgnoreBot",
+            @"AimIgnoreKnock",
+            @"AimBehindWall",
+            @"Aimbot",
+            @"AimAssist",
+            @"AimSilent",
+            @"AimLegit",
+            @"AimRage",
+            @"Aim360",
+            @"ShowFovCircle",
+
+            // ---- ESP toggles + visual tuning ----
+            @"EnableESP", @"EnableESP2",
+            @"Box", @"BoxMode", @"Bone", @"Health", @"Name", @"Distance",
+            @"Line", @"EspBot", @"Weapon", @"Count",
+            @"Alert360", @"AlertNum", @"EspCheckVisible",
+            @"EspDistanceLimit",
+            @"BoxThickness", @"BoneThickness", @"LineThickness",
+            @"FovThickness", @"AimAssistThickness",
+            @"BoxColorMode", @"BoxColorR", @"BoxColorG", @"BoxColorB",
+            @"BoneColorMode", @"BoneColorR", @"BoneColorG", @"BoneColorB",
+            @"LineColorMode", @"LineColorR", @"LineColorG", @"LineColorB",
+            @"FovColorMode", @"FovColorR", @"FovColorG", @"FovColorB",
+            @"AimAssistColorR", @"AimAssistColorG", @"AimAssistColorB"
         ]];
     });
     return [globalKeys containsObject:key];
