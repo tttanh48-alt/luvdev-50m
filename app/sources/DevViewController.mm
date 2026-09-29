@@ -1,5 +1,4 @@
 #import "DevViewController.h"
-#import "MDTheme.h"
 #import "AppSettingsViewController.h"
 #import "roothide/varCleanController.h"
 #import <SafariServices/SafariServices.h>
@@ -7,54 +6,112 @@
 
 static const void *kDevSocialURLKey = &kDevSocialURLKey;
 
-// Dev profile — edit links/name here.
-static NSString *const kDevName = @"Bola Minh Đức";
-static NSString *const kDevTagline = @"Công việc · ib Telegram";
-static NSString *const kDevZalo = @"https://zalo.me/";
-static NSString *const kDevFacebook = @"https://facebook.com/";
-static NSString *const kDevTelegram = @"https://t.me/";
-static NSString *const kDevTikTok = @"https://www.tiktok.com/";
+// ============ VN TOOL profile ============
+static NSString *const kDevName    = @"VN TOOL";
+static NSString *const kDevTagline = @"Free Fire iOS Companion";
+static NSString *const kDevTelegram = @"https://t.me/vntool";
+
+#pragma mark - VN TOOL iOS light theme (khớp HomeViewController)
+
+static UIColor *VNBg(void)       { return [UIColor colorWithRed:0.949 green:0.949 blue:0.969 alpha:1.0]; }
+static UIColor *VNCard(void)     { return [UIColor whiteColor]; }
+static UIColor *VNPanel2(void)   { return [UIColor colorWithWhite:0.90 alpha:1.0]; }
+static UIColor *VNLine(void)     { return [UIColor colorWithWhite:0.85 alpha:1.0]; }
+static UIColor *VNText(void)     { return [UIColor blackColor]; }
+static UIColor *VNMuted(void)    { return [UIColor colorWithWhite:0.42 alpha:1.0]; }
+static UIColor *VNAccent(void)   { return [UIColor colorWithRed:0.20 green:0.78 blue:0.35 alpha:1.0]; }
+static UIColor *VNRed(void)      { return [UIColor colorWithRed:1.0 green:0.23 blue:0.19 alpha:1.0]; }
+
+static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
+    return [UIFont systemFontOfSize:size weight:weight];
+}
+
+static UIView *VNMakeCard(void) {
+    UIView *v = [[UIView alloc] init];
+    v.backgroundColor = VNCard();
+    v.layer.cornerRadius = 12.0f;
+    v.layer.borderWidth = 0.0f;
+    v.clipsToBounds = YES;
+    return v;
+}
+
+static UIButton *VNMakeIconButton(NSString *systemName) {
+    UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
+    b.backgroundColor = VNPanel2();
+    b.layer.cornerRadius = 10.0f;
+    b.tintColor = VNAccent();
+    UIImage *img = [UIImage systemImageNamed:systemName];
+    if (img) [b setImage:img forState:UIControlStateNormal];
+    return b;
+}
 
 @interface DevViewController ()
 @property (nonatomic, strong) UIScrollView *scroll;
 @property (nonatomic, strong) UIView *content;
 @property (nonatomic, strong) UILabel *titleLabel;
+@property (nonatomic, strong) UILabel *subtitleLabel;
 @property (nonatomic, strong) UIButton *settingsBtn;
 @property (nonatomic, strong) UIButton *trashBtn;
+
 @property (nonatomic, strong) UIView *profileCard;
 @property (nonatomic, strong) UIImageView *avatarView;
 @property (nonatomic, strong) UILabel *nameLabel;
 @property (nonatomic, strong) UILabel *tagLabel;
-@property (nonatomic, strong) NSArray<UIButton *> *socialBtns;
+@property (nonatomic, strong) UIView *statusDot;
+@property (nonatomic, strong) UILabel *statusLabel;
+
+@property (nonatomic, strong) UILabel *socialSectionLabel;
+@property (nonatomic, strong) UIButton *telegramBtn;
+
+@property (nonatomic, strong) UILabel *infoSectionLabel;
 @property (nonatomic, strong) UIView *infoCard;
 @property (nonatomic, strong) NSArray<UILabel *> *infoLeft;
 @property (nonatomic, strong) NSArray<UILabel *> *infoRight;
+
+@property (nonatomic, strong) UIView *footerCard;
+@property (nonatomic, strong) UILabel *footerLabel;
 @end
 
 @implementation DevViewController
 
+- (UIStatusBarStyle)preferredStatusBarStyle { return UIStatusBarStyleDarkContent; }
+
 - (void)viewDidLoad {
     [super viewDidLoad];
-    MDThemeLoadFromPrefs();
+    self.view.backgroundColor = VNBg();
 
     _scroll = [[UIScrollView alloc] initWithFrame:CGRectZero];
     _scroll.alwaysBounceVertical = YES;
     _scroll.showsVerticalScrollIndicator = NO;
+    _scroll.backgroundColor = VNBg();
     [self.view addSubview:_scroll];
+
     _content = [[UIView alloc] initWithFrame:CGRectZero];
+    _content.backgroundColor = VNBg();
     [_scroll addSubview:_content];
 
+    // Header
     _titleLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-    _titleLabel.text = @"Dev";
-    _titleLabel.font = MDThemeFont(30, UIFontWeightBold);
+    _titleLabel.text = @"VN TOOL";
+    _titleLabel.font = VNFont(30, UIFontWeightHeavy);
+    _titleLabel.textColor = VNText();
     [_content addSubview:_titleLabel];
 
-    _settingsBtn = MDThemeMakeSettingsButton(self, @selector(openSettings));
-    _trashBtn = MDThemeMakeTrashButton(self, @selector(openVarClean));
+    _subtitleLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+    _subtitleLabel.text = @"Developed by VN Team";
+    _subtitleLabel.font = VNFont(13, UIFontWeightMedium);
+    _subtitleLabel.textColor = VNMuted();
+    [_content addSubview:_subtitleLabel];
+
+    _settingsBtn = VNMakeIconButton(@"gearshape.fill");
+    [_settingsBtn addTarget:self action:@selector(openSettings) forControlEvents:UIControlEventTouchUpInside];
+    _trashBtn = VNMakeIconButton(@"trash.fill");
+    [_trashBtn addTarget:self action:@selector(openVarClean) forControlEvents:UIControlEventTouchUpInside];
     [self.view addSubview:_settingsBtn];
     [self.view addSubview:_trashBtn];
 
-    _profileCard = MDThemeMakeCard();
+    // ============ Profile card ============
+    _profileCard = VNMakeCard();
     [_content addSubview:_profileCard];
 
     _avatarView = [[UIImageView alloc] initWithFrame:CGRectZero];
@@ -62,125 +119,168 @@ static NSString *const kDevTikTok = @"https://www.tiktok.com/";
     _avatarView.clipsToBounds = YES;
     _avatarView.layer.cornerRadius = 36;
     _avatarView.layer.borderWidth = 2;
+    _avatarView.layer.borderColor = VNAccent().CGColor;
+    _avatarView.backgroundColor = VNPanel2();
     UIImage *av = [UIImage imageNamed:@"logo"] ?: [UIImage imageNamed:@"ff"];
-    if (!av) {
-        // Placeholder circle
-        _avatarView.backgroundColor = MDThemeAccentSoft(0.35f);
-    } else {
-        _avatarView.image = av;
-    }
+    if (av) _avatarView.image = av;
     [_profileCard addSubview:_avatarView];
 
     _nameLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     _nameLabel.text = kDevName;
-    _nameLabel.font = MDThemeFont(20, UIFontWeightBold);
+    _nameLabel.font = VNFont(22, UIFontWeightHeavy);
+    _nameLabel.textColor = VNText();
     [_profileCard addSubview:_nameLabel];
 
     _tagLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     _tagLabel.text = kDevTagline;
-    _tagLabel.font = MDThemeFont(12, UIFontWeightMedium);
+    _tagLabel.font = VNFont(13, UIFontWeightMedium);
+    _tagLabel.textColor = VNMuted();
     _tagLabel.numberOfLines = 2;
     [_profileCard addSubview:_tagLabel];
 
-    NSArray *socials = @[
-        @[ @"Zalo", kDevZalo, @"message.fill" ],
-        @[ @"Facebook", kDevFacebook, @"f.circle.fill" ],
-        @[ @"Telegram", kDevTelegram, @"paperplane.fill" ],
-        @[ @"TikTok", kDevTikTok, @"music.note" ],
-    ];
-    NSMutableArray *btns = [NSMutableArray array];
-    for (NSArray *s in socials) {
-        UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
-        b.layer.cornerRadius = 14;
-        b.layer.borderWidth = 1;
-        b.titleLabel.font = MDThemeFont(14, UIFontWeightSemibold);
-        [b setTitle:s[0] forState:UIControlStateNormal];
-        b.accessibilityHint = s[1];
-        objc_setAssociatedObject(b, kDevSocialURLKey, s[1], OBJC_ASSOCIATION_COPY_NONATOMIC);
-        [b addTarget:self action:@selector(socialTapped:) forControlEvents:UIControlEventTouchUpInside];
-        if (@available(iOS 13.0, *)) {
-            UIImage *img = [UIImage systemImageNamed:s[2]];
-            if (img) {
-                [b setImage:img forState:UIControlStateNormal];
-                b.imageEdgeInsets = UIEdgeInsetsMake(0, -6, 0, 0);
-                b.titleEdgeInsets = UIEdgeInsetsMake(0, 6, 0, 0);
-            }
-        }
-        [_content addSubview:b];
-        [btns addObject:b];
-    }
-    _socialBtns = btns;
+    _statusDot = [[UIView alloc] initWithFrame:CGRectZero];
+    _statusDot.layer.cornerRadius = 4;
+    _statusDot.backgroundColor = VNAccent();
+    [_profileCard addSubview:_statusDot];
 
-    // Build info (moved from Info tab)
-    _infoCard = MDThemeMakeCard();
+    _statusLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+    _statusLabel.text = @"Đang hoạt động";
+    _statusLabel.font = VNFont(12, UIFontWeightSemibold);
+    _statusLabel.textColor = VNAccent();
+    [_profileCard addSubview:_statusLabel];
+
+    // ============ Social section ============
+    _socialSectionLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+    _socialSectionLabel.text = @"LIÊN HỆ";
+    _socialSectionLabel.font = VNFont(13, UIFontWeightBold);
+    _socialSectionLabel.textColor = VNMuted();
+    [_content addSubview:_socialSectionLabel];
+
+    _telegramBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    _telegramBtn.backgroundColor = VNCard();
+    _telegramBtn.layer.cornerRadius = 12;
+    _telegramBtn.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeft;
+    _telegramBtn.titleLabel.font = VNFont(17, UIFontWeightSemibold);
+    [_telegramBtn setTitle:@"  Telegram · @vntool" forState:UIControlStateNormal];
+    [_telegramBtn setTitleColor:VNText() forState:UIControlStateNormal];
+    _telegramBtn.tintColor = VNAccent();
+    if (@available(iOS 13.0, *)) {
+        UIImage *img = [UIImage systemImageNamed:@"paperplane.fill"];
+        if (img) {
+            [_telegramBtn setImage:img forState:UIControlStateNormal];
+            _telegramBtn.imageEdgeInsets = UIEdgeInsetsMake(0, 16, 0, 0);
+            _telegramBtn.titleEdgeInsets = UIEdgeInsetsMake(0, 24, 0, 0);
+        }
+    }
+    [_telegramBtn addTarget:self action:@selector(telegramTapped:) forControlEvents:UIControlEventTouchUpInside];
+    [_content addSubview:_telegramBtn];
+
+    // ============ Info section ============
+    _infoSectionLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+    _infoSectionLabel.text = @"THÔNG TIN BUILD";
+    _infoSectionLabel.font = VNFont(13, UIFontWeightBold);
+    _infoSectionLabel.textColor = VNMuted();
+    [_content addSubview:_infoSectionLabel];
+
+    _infoCard = VNMakeCard();
     [_content addSubview:_infoCard];
+
     NSDictionary *info = [NSBundle mainBundle].infoDictionary ?: @{};
     NSString *bundleName = info[@"CFBundleDisplayName"] ?: info[@"CFBundleName"] ?: @"—";
-    NSString *bundleID = info[@"CFBundleIdentifier"] ?: @"—";
-    NSString *shortVer = info[@"CFBundleShortVersionString"] ?: @"—";
-    NSString *buildVer = info[@"CFBundleVersion"] ?: @"—";
+    NSString *bundleID   = info[@"CFBundleIdentifier"] ?: @"—";
+    NSString *shortVer   = info[@"CFBundleShortVersionString"] ?: @"—";
+    NSString *buildVer   = info[@"CFBundleVersion"] ?: @"—";
     NSArray *pairs = @[
-        @[ @"Build Name", bundleName ],
-        @[ @"Build Number", buildVer ],
-        @[ @"Product ID", bundleID ],
-        @[ @"Version", shortVer ],
+        @[ @"Build Name",   bundleName ],
+        @[ @"Build Number", buildVer   ],
+        @[ @"Product ID",   bundleID   ],
+        @[ @"Version",      shortVer   ],
     ];
     NSMutableArray *L = [NSMutableArray array];
     NSMutableArray *R = [NSMutableArray array];
     for (NSArray *p in pairs) {
         UILabel *l = [[UILabel alloc] initWithFrame:CGRectZero];
         l.text = p[0];
-        l.font = MDThemeFont(13, UIFontWeightMedium);
+        l.font = VNFont(16, UIFontWeightSemibold);
+        l.textColor = VNText();
         [_infoCard addSubview:l];
         [L addObject:l];
+
         UILabel *r = [[UILabel alloc] initWithFrame:CGRectZero];
         r.text = p[1];
-        r.font = MDThemeFont(13, UIFontWeightRegular);
+        r.font = VNFont(15, UIFontWeightMedium);
+        r.textColor = VNMuted();
         r.textAlignment = NSTextAlignmentRight;
         r.adjustsFontSizeToFitWidth = YES;
+        r.minimumScaleFactor = 0.7;
         [_infoCard addSubview:r];
         [R addObject:r];
     }
     _infoLeft = L;
     _infoRight = R;
 
-    [[NSNotificationCenter defaultCenter] addObserver:self
-                                             selector:@selector(applyTheme)
-                                                 name:MDThemeDidChangeNotification
-                                               object:nil];
+    // ============ Footer ============
+    _footerCard = VNMakeCard();
+    [_content addSubview:_footerCard];
+
+    _footerLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+    _footerLabel.text = @"© 2025 VN TOOL · All rights reserved";
+    _footerLabel.font = VNFont(12, UIFontWeightMedium);
+    _footerLabel.textColor = VNMuted();
+    _footerLabel.textAlignment = NSTextAlignmentCenter;
+    [_footerCard addSubview:_footerLabel];
+
     [self applyTheme];
 }
 
-- (void)dealloc {
-    [[NSNotificationCenter defaultCenter] removeObserver:self];
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    [self applyTheme];
+    if (self.tabBarController) {
+        self.tabBarController.tabBar.barStyle = UIBarStyleDefault;
+        self.tabBarController.tabBar.translucent = NO;
+        self.tabBarController.tabBar.barTintColor = VNCard();
+        self.tabBarController.tabBar.tintColor = VNAccent();
+        self.tabBarController.tabBar.unselectedItemTintColor = VNMuted();
+        self.tabBarController.view.backgroundColor = VNBg();
+    }
+}
+
+- (void)viewDidAppear:(BOOL)animated {
+    [super viewDidAppear:animated];
+    [self setNeedsStatusBarAppearanceUpdate];
 }
 
 - (void)applyTheme {
-    MDThemeLoadFromPrefs();
-    self.view.backgroundColor = MDThemeBg();
-    _titleLabel.textColor = MDThemeText();
-    _profileCard.backgroundColor = MDThemePanel();
-    _profileCard.layer.borderColor = MDThemeLine().CGColor;
-    _avatarView.layer.borderColor = MDThemeAccent().CGColor;
-    _nameLabel.textColor = MDThemeText();
-    _tagLabel.textColor = MDThemeMuted();
-    _infoCard.backgroundColor = MDThemePanel();
-    _infoCard.layer.borderColor = MDThemeLine().CGColor;
-    for (UILabel *l in _infoLeft) l.textColor = MDThemeText();
-    for (UILabel *r in _infoRight) r.textColor = MDThemeMuted();
-    for (UIButton *b in _socialBtns) {
-        b.backgroundColor = MDThemePanel2();
-        b.layer.borderColor = MDThemeLine().CGColor;
-        [b setTitleColor:MDThemeText() forState:UIControlStateNormal];
-        b.tintColor = MDThemeAccent();
-    }
-    _settingsBtn.backgroundColor = MDThemePanel2();
-    _settingsBtn.layer.borderColor = MDThemeLine().CGColor;
-    _settingsBtn.tintColor = MDThemeText();
-    _trashBtn.backgroundColor = MDThemePanel2();
-    _trashBtn.layer.borderColor = MDThemeLine().CGColor;
-    _trashBtn.tintColor = MDThemeText();
-    if (self.tabBarController) MDThemeApplyToTabBar(self.tabBarController.tabBar);
+    self.view.backgroundColor = VNBg();
+    _titleLabel.textColor = VNText();
+    _subtitleLabel.textColor = VNMuted();
+
+    _profileCard.backgroundColor = VNCard();
+    _avatarView.layer.borderColor = VNAccent().CGColor;
+    _avatarView.backgroundColor = VNPanel2();
+    _nameLabel.textColor = VNText();
+    _tagLabel.textColor = VNMuted();
+    _statusDot.backgroundColor = VNAccent();
+    _statusLabel.textColor = VNAccent();
+
+    _socialSectionLabel.textColor = VNMuted();
+    _telegramBtn.backgroundColor = VNCard();
+    _telegramBtn.tintColor = VNAccent();
+    [_telegramBtn setTitleColor:VNText() forState:UIControlStateNormal];
+
+    _infoSectionLabel.textColor = VNMuted();
+    _infoCard.backgroundColor = VNCard();
+    for (UILabel *l in _infoLeft) l.textColor = VNText();
+    for (UILabel *r in _infoRight) r.textColor = VNMuted();
+
+    _footerCard.backgroundColor = VNCard();
+    _footerLabel.textColor = VNMuted();
+
+    _settingsBtn.backgroundColor = VNPanel2();
+    _settingsBtn.tintColor = VNAccent();
+    _trashBtn.backgroundColor = VNPanel2();
+    _trashBtn.tintColor = VNAccent();
 }
 
 - (void)openSettings {
@@ -197,13 +297,14 @@ static NSString *const kDevTikTok = @"https://www.tiktok.com/";
     [self presentViewController:nav animated:YES completion:nil];
 }
 
-- (void)socialTapped:(UIButton *)sender {
-    NSString *urlStr = objc_getAssociatedObject(sender, kDevSocialURLKey);
-    if (!urlStr.length) return;
-    NSURL *url = [NSURL URLWithString:urlStr];
+- (void)telegramTapped:(UIButton *)sender {
+    (void)sender;
+    NSURL *url = [NSURL URLWithString:kDevTelegram];
     if (!url) return;
     if (@available(iOS 9.0, *)) {
         SFSafariViewController *svc = [[SFSafariViewController alloc] initWithURL:url];
+        svc.preferredBarTintColor = VNCard();
+        svc.preferredControlTintColor = VNAccent();
         [self presentViewController:svc animated:YES completion:nil];
     } else {
         [[UIApplication sharedApplication] openURL:url options:@{} completionHandler:nil];
@@ -217,42 +318,57 @@ static NSString *const kDevTikTok = @"https://www.tiktok.com/";
     CGFloat h = self.view.bounds.size.height;
     _scroll.frame = self.view.bounds;
 
-    CGFloat gear = 36;
+    CGFloat gear = 44;
     _settingsBtn.frame = CGRectMake(w - in.right - 16 - gear, in.top + 8, gear, gear);
     _trashBtn.frame = CGRectMake(CGRectGetMinX(_settingsBtn.frame) - 10 - gear, in.top + 8, gear, gear);
 
     CGFloat pad = 16;
-    CGFloat y = in.top + 52;
-    _titleLabel.frame = CGRectMake(pad + 4, y, w - pad * 2 - 80, 36);
-    y = CGRectGetMaxY(_titleLabel.frame) + 16;
-
     CGFloat cardW = w - pad * 2;
-    _profileCard.frame = CGRectMake(pad, y, cardW, 110);
-    _avatarView.frame = CGRectMake(16, 19, 72, 72);
-    _nameLabel.frame = CGRectMake(104, 28, cardW - 120, 28);
-    _tagLabel.frame = CGRectMake(104, 58, cardW - 120, 32);
-    y = CGRectGetMaxY(_profileCard.frame) + 14;
+    CGFloat y = in.top + 20;
 
-    CGFloat gap = 10;
-    CGFloat btnW = (cardW - gap) * 0.5f;
-    CGFloat btnH = 48;
-    for (NSUInteger i = 0; i < _socialBtns.count; i++) {
-        NSUInteger col = i % 2;
-        NSUInteger row = i / 2;
-        CGFloat bx = pad + col * (btnW + gap);
-        CGFloat by = y + row * (btnH + gap);
-        _socialBtns[i].frame = CGRectMake(bx, by, btnW, btnH);
-    }
-    y += 2 * (btnH + gap) + 8;
+    // Header
+    _titleLabel.frame = CGRectMake(pad + 4, y, cardW - 80, 40);
+    _subtitleLabel.frame = CGRectMake(pad + 4, y + 42, cardW - 80, 20);
+    y = y + 42 + 20 + 22;
 
-    CGFloat rowH = 44;
+    // ===== Profile card =====
+    CGFloat profileH = 130;
+    _profileCard.frame = CGRectMake(pad, y, cardW, profileH);
+    CGFloat avatarSize = 80;
+    _avatarView.frame = CGRectMake(20, (profileH - avatarSize) * 0.5f, avatarSize, avatarSize);
+    CGFloat textX = 20 + avatarSize + 16;
+    _nameLabel.frame = CGRectMake(textX, 30, cardW - textX - 20, 30);
+    _tagLabel.frame  = CGRectMake(textX, 62, cardW - textX - 20, 20);
+    _statusDot.frame = CGRectMake(textX, 96, 8, 8);
+    _statusLabel.frame = CGRectMake(textX + 14, 90, cardW - textX - 30, 20);
+    y = CGRectGetMaxY(_profileCard.frame) + 26;
+
+    // ===== Social section =====
+    _socialSectionLabel.frame = CGRectMake(pad + 4, y, cardW - 8, 20);
+    y = CGRectGetMaxY(_socialSectionLabel.frame) + 10;
+
+    CGFloat socialH = 60;
+    _telegramBtn.frame = CGRectMake(pad, y, cardW, socialH);
+    y = CGRectGetMaxY(_telegramBtn.frame) + 26;
+
+    // ===== Info section =====
+    _infoSectionLabel.frame = CGRectMake(pad + 4, y, cardW - 8, 20);
+    y = CGRectGetMaxY(_infoSectionLabel.frame) + 10;
+
+    CGFloat rowH = 52;
     CGFloat infoH = rowH * _infoLeft.count;
     _infoCard.frame = CGRectMake(pad, y, cardW, infoH);
     for (NSUInteger i = 0; i < _infoLeft.count; i++) {
-        _infoLeft[i].frame = CGRectMake(16, i * rowH, cardW * 0.38f, rowH);
-        _infoRight[i].frame = CGRectMake(cardW * 0.40f, i * rowH, cardW * 0.55f - 16, rowH);
+        _infoLeft[i].frame  = CGRectMake(20, i * rowH, cardW * 0.42f, rowH);
+        _infoRight[i].frame = CGRectMake(cardW * 0.44f, i * rowH, cardW * 0.56f - 20, rowH);
     }
-    y = CGRectGetMaxY(_infoCard.frame) + 28 + in.bottom;
+    y = CGRectGetMaxY(_infoCard.frame) + 26;
+
+    // ===== Footer =====
+    CGFloat footerH = 56;
+    _footerCard.frame = CGRectMake(pad, y, cardW, footerH);
+    _footerLabel.frame = CGRectMake(0, 0, cardW, footerH);
+    y = CGRectGetMaxY(_footerCard.frame) + 24 + in.bottom;
 
     _content.frame = CGRectMake(0, 0, w, MAX(y, h));
     _scroll.contentSize = _content.bounds.size;
