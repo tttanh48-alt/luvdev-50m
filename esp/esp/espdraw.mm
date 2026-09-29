@@ -135,9 +135,9 @@ static void ESPRenderPawnCore(
 
     const bool isKnocked = (isKnockedFlag != 0);
     const bool isBot = (isBotFlag != 0);
-    NSString *Name = GetNickName(PawnObject);
-    if (!Name || Name.length == 0) Name = isBot ? @"BOT" : @"Player";
-
+    // Name ESP is disabled, but legacy drawing branches still reference these symbols.
+    NSString *Name = @"";
+    CGFloat dynFontSize = fmaxf(4.5f, fminf(10.0f, 350.0f / fmaxf(dis, 1.0f)));
     Vector3 HeadPos; HeadPos.x = headX; HeadPos.y = headY; HeadPos.z = headZ;
     Vector3 HipPos;  HipPos.x = hipX;  HipPos.y = hipY;  HipPos.z = hipZ;
     Vector3 RightToePos = getPositionExt(getRightToeNode(PawnObject));
@@ -153,12 +153,8 @@ static void ESPRenderPawnCore(
 
     float worldHeight = fabsf(HeadPos.y - RightToePos.y);
 
-    Vector3 L_Ankle      = getPositionExt(getLeftAnkle(PawnObject));
-    Vector3 R_Ankle      = getPositionExt(getRightAnkle(PawnObject));
-    Vector3 L_ForeArm    = getPositionExt(getLeftElbow(PawnObject));
-    Vector3 R_ForeArm    = getPositionExt(getRightElbow(PawnObject));
-    Vector3 L_Hand       = getPositionExt(getLeftHand(PawnObject));
-    Vector3 R_Hand       = getPositionExt(getRightHand(PawnObject));
+    // Kept as zero placeholders so the disabled legacy bone block remains inert.
+    Vector3 L_Ankle{} , R_Ankle{}, L_ForeArm{}, R_ForeArm{}, L_Hand{}, R_Hand{};
 
     Vector3 HeadTop = HeadPos; HeadTop.y += 0.2f;
     Vector3 w2sHead    = WorldToScreenLayer(HeadTop, matrix, matrixVpWidth, matrixVpHeight, layerWidth, layerHeight);
@@ -204,13 +200,10 @@ static void ESPRenderPawnCore(
     if (boxHeight < 6.0f) boxHeight = 6.0f;
     if (boxWidth < 4.0f) boxWidth = 4.0f;
 
-    CGFloat dynFontSize = fmaxf(4.5f, fminf(10.0f, 350.0f / fmaxf(dis, 1.0f)));
     float centerX = x + boxWidth * 0.5f;
 
-    // ---------------------------------------------------------
-    // BONE
-    // ---------------------------------------------------------
-    if (isBone) {
+    // Bone ESP disabled in lightweight profile.
+    if (false) {
         Vector3 wHead   = WorldToScreenLayer(HeadPos,   matrix, matrixVpWidth, matrixVpHeight, layerWidth, layerHeight);
         Vector3 wLE     = WorldToScreenLayer(L_ForeArm,  matrix, matrixVpWidth, matrixVpHeight, layerWidth, layerHeight);
         Vector3 wRE     = WorldToScreenLayer(R_ForeArm,  matrix, matrixVpWidth, matrixVpHeight, layerWidth, layerHeight);
