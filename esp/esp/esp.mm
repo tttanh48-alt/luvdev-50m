@@ -3987,9 +3987,14 @@ static inline uint64_t ESPPhaseNowUS(void) {
         if (CurHP <= 0) shouldCountEnemy = false; // CurHP<=0 is terminal; ignore lagged isKnocked for counting ghosts.
         float countDis = dis;
         float countLimit = fmaxf(espDistanceLimit, 1.0f);
-        if (shouldCountEnemy && countDis <= countLimit && countDis >= 1.5f) {
-            uint64_t uid = ReadAddr<uint64_t>(PawnObject + kUserID);
-            uint64_t dedupKey = (uid != 0) ? uid : PawnObject;
+        float countDis = dis;
+float countLimit = fmaxf(espDistanceLimit, 1.0f);
+
+if (isCount && CurHP > 0 && shouldCountEnemy &&
+    countDis <= countLimit && countDis >= 1.5f) {
+    uint64_t uid = ReadAddr<uint64_t>(PawnObject + kUserID);
+    uint64_t dedupKey = (uid != 0) ? uid : PawnObject;
+
             static uint64_t s_countSeen[128];
             static int s_countFrame = -1;
             static int s_countN = 0;
