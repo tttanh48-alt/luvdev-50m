@@ -1,11 +1,14 @@
 //
-//  SpringBoardOverlay.m — Fl0rk DrawView: EXTRA trojan thread + 15fps
+//  SpringBoardOverlay.m — Fl0rk DrawView: EXTRA trojan thread
 //
 //  One shape layer, one colour (white). The 6-group colour split was
 //  reverted: it killed ESP and broke aim. Colours of individual elements
 //  (health bar, box, bone, snapline) are drawn on the app side but the
-//  SpringBoard mirror renders every subpath in white, which is what the
-//  build has always done.
+//  SpringBoard mirror renders every subpath in white.
+//
+//  Changes vs previous working build:
+//    - SB_MIN_PUBLISH_INTERVAL_US 8000 -> 16666 (60fps instead of 125fps)
+//    - lineWidth 1.5 -> 0.6 (thinner ESP outline)
 //
 
 #import "SpringBoardOverlay.h"
@@ -18,7 +21,11 @@
 #import <mach/mach_time.h>
 
 #define SB_OVERLAY_WIN_LEVEL 999999.0
-#define SB_MIN_PUBLISH_INTERVAL_US 8000ULL
+// Was 8000 (125fps). 16666 gives 60fps and cuts SB-side CPU in half.
+#define SB_MIN_PUBLISH_INTERVAL_US 16666ULL
+
+// Skeleton limbs are the only ESP element with no batchable CoreGraphics
+// primitive. Off by default.
 #define SB_DRAW_BONES 0
 
 static BOOL g_sbOverlayOn = NO;
@@ -375,7 +382,10 @@ int SBoardStartOverlay(void) {
     r_msg2_main_raw(shape, "setFrame:", bounds, 32, NULL,0,NULL,0,NULL,0);
     if (r_is_objc_ptr(whiteCGColor)) r_msg2_main(shape, "setStrokeColor:", whiteCGColor, 0,0,0);
     r_msg2_main(shape, "setFillColor:", 0, 0,0,0);
-    double lw = 1.5;
+    // 0.6pt instead of 1.5pt. At 3x device scale the old value rendered
+    // as a 4-5px outline. 0.6 gives roughly a 2px line, matching the
+    // thin reference the user asked for.
+    double lw = 0.6;
     r_msg2_main_raw(shape, "setLineWidth:", &lw, 8, NULL,0,NULL,0,NULL,0);
     r_msg2_main(shape, "setOpaque:", 0, 0,0,0);
     double z = 100;
