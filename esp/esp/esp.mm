@@ -3982,19 +3982,15 @@ static inline uint64_t ESPPhaseNowUS(void) {
             s_espBotFrame = g_cacheFrameCounter;
             s_espBotPref = ESPPrefsBool(@"EspBot", NO);
         }
-        bool shouldCountEnemy = true;
+              bool shouldCountEnemy = true;
         if (isBot && !s_espBotPref) shouldCountEnemy = false;
-        if (CurHP <= 0) shouldCountEnemy = false; // CurHP<=0 is terminal; ignore lagged isKnocked for counting ghosts.
-        float countDis = dis;
+        if (CurHP <= 0) shouldCountEnemy = false;
         float countLimit = fmaxf(espDistanceLimit, 1.0f);
-        float countDis = dis;
-float countLimit = fmaxf(espDistanceLimit, 1.0f);
+        bool countDisOk = !useLocalDistance || (dis >= 0.1f && dis <= countLimit);
 
-if (isCount && CurHP > 0 && shouldCountEnemy &&
-    countDis <= countLimit && countDis >= 1.5f) {
-    uint64_t uid = ReadAddr<uint64_t>(PawnObject + kUserID);
-    uint64_t dedupKey = (uid != 0) ? uid : PawnObject;
-
+        if (shouldCountEnemy && countDisOk) {
+            uint64_t uid = ReadAddr<uint64_t>(PawnObject + kUserID);
+            uint64_t dedupKey = (uid != 0) ? uid : PawnObject;
             static uint64_t s_countSeen[128];
             static int s_countFrame = -1;
             static int s_countN = 0;
