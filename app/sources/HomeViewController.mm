@@ -47,8 +47,7 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
 @interface HomeViewController ()
 @property (nonatomic, strong) UIScrollView *scrollView;
 @property (nonatomic, strong) UIView *contentView;
-@property (nonatomic, strong) UIButton *closeBtn;
-@property (nonatomic, strong) UILabel *titleLabel;
+@property (nonatomic, strong) UIButton *settingsBtn;
 
 @property (nonatomic, strong) UIView *controlCard;
 @property (nonatomic, strong) UIImageView *controlIconView;
@@ -127,11 +126,9 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
 @property (nonatomic, strong) UISwitch *autoCleanSwitch;
 @property (nonatomic, strong) UILabel *authorizationLabel;
 @property (nonatomic, strong) UIButton *authorizationButton;
-@property (nonatomic, strong) UIButton *settingsBtn;
 @property (nonatomic, strong) UIView *logCard;
 @property (nonatomic, strong) UITextView *logTextView;
 - (void)appendBootLog:(NSString *)line;
-@property (nonatomic, strong) UIButton *trashBtn;
 
 @property (nonatomic, strong) NSTimer *pollTimer;
 @property (nonatomic, assign) NSInteger gameMissingStreak;
@@ -206,38 +203,8 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     [self presentViewController:vc animated:YES completion:nil];
 }
 
-- (void)openVarClean {
-    varCleanController *vc = [varCleanController sharedInstance];
-    UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:vc];
-    nav.modalPresentationStyle = UIModalPresentationFormSheet;
-    [self presentViewController:nav animated:YES completion:nil];
-}
-
-- (void)closeAppTapped:(id)sender {
-    (void)sender;
-    UIApplication *app = [UIApplication sharedApplication];
-    NSString *bundleId = GameTargetIsMax() ? @"com.dts.freefiremax" : @"vn.vng.freefireth";
-    NSURL *url = [NSURL URLWithString:[NSString stringWithFormat:@"%@://", bundleId]];
-    if ([app canOpenURL:url]) { [app openURL:url options:@{} completionHandler:nil]; return; }
-    NSArray<NSString *> *fallbacks = GameTargetIsMax()
-        ? @[ @"freefiremax://", @"ffmax://" ]
-        : @[ @"freefireth://", @"freefire://" ];
-    for (NSString *scheme in fallbacks) {
-        NSURL *u = [NSURL URLWithString:scheme];
-        if ([app canOpenURL:u]) { [app openURL:u options:@{} completionHandler:nil]; return; }
-    }
-    UIAlertController *alert =
-        [UIAlertController alertControllerWithTitle:@"Ẩn menu"
-                                            message:@"Vuốt lên từ đáy màn hình để ẩn app. ĐỪNG tắt app — sẽ mất ESP."
-                                     preferredStyle:UIAlertControllerStyleAlert];
-    [alert addAction:[UIAlertAction actionWithTitle:@"Đã hiểu" style:UIAlertActionStyleDefault handler:nil]];
-    [self presentViewController:alert animated:YES completion:nil];
-}
-
 - (void)applyTheme {
     self.view.backgroundColor = VNBg();
-    _titleLabel.textColor = VNText();
-    _titleLabel.font = VNFont(30, UIFontWeightHeavy);
 
     _controlCard.backgroundColor = VNCard();
     _controlTitleLabel.textColor = VNText();
@@ -322,10 +289,6 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
 
     _settingsBtn.backgroundColor = VNPanel2();
     _settingsBtn.tintColor = VNAccent();
-    _trashBtn.backgroundColor = VNPanel2();
-    _trashBtn.tintColor = VNAccent();
-    _closeBtn.backgroundColor = VNPanel2();
-    [_closeBtn setTitleColor:VNAccent() forState:UIControlStateNormal];
 
     [self updateVersionSelectionUI];
     [self updateAuthorizationPresentation];
@@ -351,16 +314,6 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     b.tintColor = VNAccent();
     UIImage *img = [UIImage systemImageNamed:systemName];
     if (img) [b setImage:img forState:UIControlStateNormal];
-    return b;
-}
-
-- (UIButton *)makeCloseButton {
-    UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
-    b.backgroundColor = VNPanel2();
-    b.layer.cornerRadius = 10.0f;
-    b.titleLabel.font = [UIFont systemFontOfSize:20 weight:UIFontWeightBold];
-    [b setTitle:@"✕" forState:UIControlStateNormal];
-    [b setTitleColor:VNAccent() forState:UIControlStateNormal];
     return b;
 }
 
@@ -428,22 +381,10 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _contentView.backgroundColor = VNBg();
     [_scrollView addSubview:_contentView];
 
-    _closeBtn = [self makeCloseButton];
-    [_closeBtn addTarget:self action:@selector(closeAppTapped:) forControlEvents:UIControlEventTouchUpInside];
-    [self.view addSubview:_closeBtn];
-
+    // Chỉ giữ settings button (đã bỏ close & trash)
     _settingsBtn = [self makeIconButton:@"gearshape.fill"];
     [_settingsBtn addTarget:self action:@selector(openSettings) forControlEvents:UIControlEventTouchUpInside];
-    _trashBtn = [self makeIconButton:@"trash.fill"];
-    [_trashBtn addTarget:self action:@selector(openVarClean) forControlEvents:UIControlEventTouchUpInside];
     [self.view addSubview:_settingsBtn];
-    [self.view addSubview:_trashBtn];
-
-    _titleLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-    _titleLabel.text = @"VN TOOL";
-    _titleLabel.font = VNFont(30, UIFontWeightHeavy);
-    _titleLabel.textColor = VNText();
-    [_contentView addSubview:_titleLabel];
 
     // Control card
     _controlCard = [self makeCard];
@@ -458,13 +399,15 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
 
     _controlTitleLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     _controlTitleLabel.text = @"Điều khiển HUD";
-    _controlTitleLabel.font = VNFont(18, UIFontWeightBold);
+    _controlTitleLabel.font = VNFont(17, UIFontWeightBold);
     _controlTitleLabel.textColor = VNText();
+    _controlTitleLabel.adjustsFontSizeToFitWidth = YES;
+    _controlTitleLabel.minimumScaleFactor = 0.85f;
     [_controlCard addSubview:_controlTitleLabel];
 
     _controlSubtitleLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     _controlSubtitleLabel.text = @"Nhấn Bắt đầu khi game đã mở";
-    _controlSubtitleLabel.font = VNFont(13, UIFontWeightMedium);
+    _controlSubtitleLabel.font = VNFont(12, UIFontWeightMedium);
     _controlSubtitleLabel.textColor = VNMuted();
     _controlSubtitleLabel.numberOfLines = 2;
     [_controlCard addSubview:_controlSubtitleLabel];
@@ -483,7 +426,7 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _killAllButton.layer.cornerRadius = 12.0f;
     _killAllButton.layer.borderWidth = 1.5f;
     _killAllButton.layer.borderColor = VNRed().CGColor;
-    _killAllButton.titleLabel.font = VNFont(15, UIFontWeightBold);
+    _killAllButton.titleLabel.font = VNFont(14, UIFontWeightBold);
     [_killAllButton setTitleColor:VNRed() forState:UIControlStateNormal];
     [_killAllButton setTitle:@"Tắt hết" forState:UIControlStateNormal];
     [_killAllButton addTarget:self action:@selector(killAllTapped:) forControlEvents:UIControlEventTouchUpInside];
@@ -493,7 +436,6 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _togglesCard = [self makeCard];
     [_contentView addSubview:_togglesCard];
 
-    // --- Aimbot ---
     _aimbotLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     _aimbotLabel.text = @"Aimbot";
     _aimbotLabel.font = VNFont(17, UIFontWeightSemibold);
@@ -505,7 +447,6 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     [_aimbotSwitch addTarget:self action:@selector(aimbotSwitchChanged:) forControlEvents:UIControlEventValueChanged];
     [_togglesCard addSubview:_aimbotSwitch];
 
-    // --- Aim Behind Wall (moved here) ---
     _aimBehindWallLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     _aimBehindWallLabel.text = @"Aim Behind Wall";
     _aimBehindWallLabel.font = VNFont(17, UIFontWeightSemibold);
@@ -518,7 +459,6 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     [_aimBehindWallSwitch addTarget:self action:@selector(aimBehindWallSwitchChanged:) forControlEvents:UIControlEventValueChanged];
     [_togglesCard addSubview:_aimBehindWallSwitch];
 
-    // --- Silent Aim ---
     _silentAimLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     _silentAimLabel.text = @"Silent Aim";
     _silentAimLabel.font = VNFont(17, UIFontWeightSemibold);
@@ -530,9 +470,8 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     [_silentAimSwitch addTarget:self action:@selector(silentAimSwitchChanged:) forControlEvents:UIControlEventValueChanged];
     [_togglesCard addSubview:_silentAimSwitch];
 
-    // --- ESP Master ---
     _espLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-    _espLabel.text = @"ESP Master";
+    _espLabel.text = @"Bật ESP";
     _espLabel.font = VNFont(17, UIFontWeightSemibold);
     _espLabel.textColor = VNText();
     [_togglesCard addSubview:_espLabel];
@@ -542,7 +481,6 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     [_espSwitch addTarget:self action:@selector(espSwitchChanged:) forControlEvents:UIControlEventValueChanged];
     [_togglesCard addSubview:_espSwitch];
 
-    // --- Camera Xa ---
     _camLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     _camLabel.text = @"Camera Xa (CamPC)";
     _camLabel.font = VNFont(17, UIFontWeightSemibold);
@@ -652,7 +590,7 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     [_espDistanceLimitSlider addTarget:self action:@selector(espDistanceLimitCommitted:) forControlEvents:UIControlEventTouchUpInside | UIControlEventTouchUpOutside];
     [_espCard addSubview:_espDistanceLimitSlider];
 
-    // Aimbot card (FOV, Trigger, AimPos only now)
+    // Aimbot card
     _aimCard = [self makeCard];
     [_contentView addSubview:_aimCard];
     _fovLabel = [[UILabel alloc] initWithFrame:CGRectZero];
@@ -863,17 +801,12 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _scrollView.frame = self.view.bounds;
 
     CGFloat gear = 44.0f;
-    _closeBtn.frame = CGRectMake(insets.left + 16, insets.top + 8, gear, gear);
     _settingsBtn.frame = CGRectMake(width - insets.right - 16 - gear, insets.top + 8, gear, gear);
-    _trashBtn.frame = CGRectMake(CGRectGetMinX(_settingsBtn.frame) - 10 - gear, insets.top + 8, gear, gear);
 
     CGFloat contentW = width;
     CGFloat xPad = 16.0f;
     CGFloat cardW = contentW - xPad * 2.0f;
     CGFloat y = insets.top + 62.0f;
-
-    _titleLabel.frame = CGRectMake(20, y, cardW, 44);
-    y = CGRectGetMaxY(_titleLabel.frame) + 18;
 
     // ===== CONTROL =====
     CGFloat controlH = 100.0f;
@@ -886,52 +819,46 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _killAllButton.frame = CGRectMake(cardW - btnW - 16, 60, btnW, 32);
 
     CGFloat textX = 14 + iconSize + 12;
-    CGFloat textW = cardW - btnW - textX - 24;
+    CGFloat textW = cardW - btnW - textX - 10;
     _controlTitleLabel.frame = CGRectMake(textX, 22, textW, 24);
     _controlSubtitleLabel.frame = CGRectMake(textX, 48, textW, 36);
     y = CGRectGetMaxY(_controlCard.frame) + 16;
 
     // ===== TOGGLES (5 rows + slider) =====
-    CGFloat toggleRowH = 56.0f;
-    CGFloat sliderAreaH = 78.0f;
+    CGFloat toggleRowH = 62.0f;
+    CGFloat sliderAreaH = 82.0f;
     CGFloat togglesH = toggleRowH * 5 + sliderAreaH;
     _togglesCard.frame = CGRectMake(xPad, y, cardW, togglesH);
 
     CGFloat rowY = 0;
-    // Aimbot
     _aimbotLabel.frame = CGRectMake(20, rowY, cardW - 110, toggleRowH);
     _aimbotSwitch.frame = CGRectMake(cardW - 71, rowY + (toggleRowH - 31) * 0.5f, 51, 31);
     rowY += toggleRowH;
 
-    // Aim Behind Wall
     _aimBehindWallLabel.frame = CGRectMake(20, rowY, cardW - 110, toggleRowH);
     _aimBehindWallSwitch.frame = CGRectMake(cardW - 71, rowY + (toggleRowH - 31) * 0.5f, 51, 31);
     rowY += toggleRowH;
 
-    // Silent Aim
     _silentAimLabel.frame = CGRectMake(20, rowY, cardW - 110, toggleRowH);
     _silentAimSwitch.frame = CGRectMake(cardW - 71, rowY + (toggleRowH - 31) * 0.5f, 51, 31);
     rowY += toggleRowH;
 
-    // ESP Master
     _espLabel.frame = CGRectMake(20, rowY, cardW - 110, toggleRowH);
     _espSwitch.frame = CGRectMake(cardW - 71, rowY + (toggleRowH - 31) * 0.5f, 51, 31);
     rowY += toggleRowH;
 
-    // Camera Xa
     _camLabel.frame = CGRectMake(20, rowY, cardW - 110, toggleRowH);
     _camSwitch.frame = CGRectMake(cardW - 71, rowY + (toggleRowH - 31) * 0.5f, 51, 31);
     rowY += toggleRowH;
 
-    // Slider
-    _camSlider.frame = CGRectMake(20, rowY + 22, cardW - 100, 30);
-    _camValueLabel.frame = CGRectMake(cardW - 64, rowY + 24, 48, 26);
+    _camSlider.frame = CGRectMake(20, rowY + 24, cardW - 100, 30);
+    _camValueLabel.frame = CGRectMake(cardW - 64, rowY + 26, 48, 26);
     y = CGRectGetMaxY(_togglesCard.frame) + 16;
 
-    // ===== ESP ELEMENTS (5 rows + slider) =====
+    // ===== ESP ELEMENTS =====
     CGFloat espTitleH = 40.0f;
-    CGFloat espRowH = 56.0f;
-    CGFloat espSliderArea = 78.0f;
+    CGFloat espRowH = 60.0f;
+    CGFloat espSliderArea = 82.0f;
     CGFloat espH = espTitleH + espRowH * 5 + espSliderArea;
     _espCard.frame = CGRectMake(xPad, y, cardW, espH);
     _espCardTitle.frame = CGRectMake(20, 14, cardW - 40, 20);
@@ -953,7 +880,7 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _espDistanceLimitSlider.frame = CGRectMake(20, espY + 34, cardW - 40, 30);
     y = CGRectGetMaxY(_espCard.frame) + 16;
 
-    // ===== AIM (FOV, Trigger, AimPos) =====
+    // ===== AIM =====
     CGFloat fovAreaH = 90.0f;
     CGFloat segAreaH = 100.0f;
     CGFloat aimH = fovAreaH + segAreaH * 2;
@@ -1295,7 +1222,7 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
 
 - (void)joinSupportTapped:(id)sender {
     (void)sender;
-    NSURL *url = [NSURL URLWithString:@"https://t.me/"];
+    NSURL *url = [NSURL URLWithString:@"https://t.me/vntool"];
     if (!url) return;
     if (@available(iOS 9.0, *)) {
         SFSafariViewController *svc = [[SFSafariViewController alloc] initWithURL:url];
