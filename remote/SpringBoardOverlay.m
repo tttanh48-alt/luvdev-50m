@@ -4,12 +4,8 @@
 //  Changes vs previous build:
 //    - 6 shape layers (was 1) grouped by color. Health bar can now be green,
 //      orange or red; box/bone/snapline keep their own colors; FOV yellow.
-//    - Group map / colors are hardcoded on the SB side. The app stream still
-//      carries the original layer index (0..15) as a marker byte, so no
-//      change is needed in mergePaths.
-//    - Publish interval default 16000us (60 fps) instead of 8000us. Six
-//      layers cost ~16 remote calls per frame, and 125 fps x 16 is what was
-//      making the device hot and the overlay stutter.
+//    - Group map / colors are hardcoded on the SB side.
+//    - Publish interval default 16000us (60 fps) instead of 8000us.
 //
 
 #import "SpringBoardOverlay.h"
@@ -25,9 +21,7 @@
 #define SB_MIN_PUBLISH_INTERVAL_US 16000ULL
 #define SB_DRAW_BONES 0
 
-// Six colour groups. The app stream still emits the original 16 layer
-// indices (kShapeKeys in SpringBoardOverlay.m), and kLayerGroupMap folds
-// each of those into one of these six buckets.
+// Six colour groups.
 enum {
     SBG_CYAN = 0,
     SBG_YELLOW = 1,
@@ -38,7 +32,7 @@ enum {
     SBG_COUNT = 6,
 };
 
-// 0..15 layer index -> 0..5 group. Same order as kShapeKeys in the app.
+// 0..15 layer index -> 0..5 group.
 //   0 boxLayer            -> cyan
 //   1 boxBotLayer         -> yellow
 //   2 boxKnockedLayer     -> red
@@ -68,7 +62,6 @@ static const SBColorF kGroupColor[SBG_COUNT] = {
     { 1.00, 0.60, 0.00, 1.00 },  // orange
     { 0.00, 0.00, 0.00, 0.55 },  // dark background
 };
-// Which groups are FILLED instead of stroked.
 static const int kGroupFilled[SBG_COUNT] = {
     0, 0, 0, 1, 1, 1
 };
@@ -84,7 +77,6 @@ static int g_sbPathRingAt = 0;
 static uint64_t g_sbMirrorPtsBuf = 0;
 static pthread_mutex_t g_sbLock = PTHREAD_MUTEX_INITIALIZER;
 
-// One cached invocation per group.
 static uint64_t g_sbSetPathInv[SBG_COUNT] = {0};
 static uint64_t g_sbSetPathArgBuf[SBG_COUNT] = {0};
 static uint64_t g_sbPerformMainSel = 0;
@@ -105,8 +97,6 @@ static uint64_t g_sbHoldUS = 0;
 static uint64_t g_sbNextPublishUS = 0;
 static uint32_t g_sbLastSubpaths = 0;
 static uint64_t g_sbLastCalls = 0;
-// Frame-to-frame "was this group drawn last frame" so we only send a nil
-// setPath when the group just went empty.
 static uint8_t g_sbGroupHadData[SBG_COUNT] = {0};
 
 static const char *kShapeKeys[16] = {
@@ -262,14 +252,8 @@ static uint64_t ptsBuffer(void) {
 }
 
 static uint64_t makeColor(double r, double g, double b, double a) {
-    // UIColor *c = [UIColor colorWithRed:r green:g blue:b alpha:a];
-    // colorWithRed:green:blue:alpha: takes four doubles for arm64.
     uint64_t cls = r_class("UIColor");
     if (!r_is_objc_ptr(cls)) return 0;
-    uint64_t sel = r_sel("colorWithRed:green:blue:alpha:");
-    if (!sel) return 0;
-    // r_msg2_main_raw passes a struct pointer. Use r_msg2_main_raw with a
-    // buffer of four doubles for the float args.
     double args[4] = { r, g, b, a };
     uint64_t col = r_msg2_main_raw(cls, "colorWithRed:green:blue:alpha:",
                                    args, 32, NULL,0,NULL,0,NULL,0);
@@ -318,7 +302,8 @@ static void sb_invoke_setpath(int g, uint64_t path) {
     if (g < 0 || g >= SBG_COUNT) return;
     if (!sb_ensure_setpath_invocation_for_group(g)) {
         if (r_is_objc_ptr(g_sbLayer[g])) {
-            r_msg2_main_async(g_sbLayer[g], "setPath:", path, 0,0,0,0);
+            // FIX: r_msg2_main_async takes 6 args (obj, sel, a0, a1, a2, a3), not 7.
+            r_msg2_main_async(g_sbLayer[g], "setPath:", path, 0, 0, 0);
         }
         return;
     }
@@ -403,7 +388,6 @@ int SBoardStartOverlay(void) {
     uint64_t cLayer = r_msg2_main(container, "layer", 0,0,0,0);
     if (!r_is_objc_ptr(cLayer)) { destroy_remote_call(); return -1; }
 
-    // Six shape layers, one per colour group.
     for (int g = 0; g < SBG_COUNT; g++) {
         uint64_t shape = r_msg2_main(r_class("CAShapeLayer"), "layer", 0,0,0,0);
         if (!r_is_objc_ptr(shape)) continue;
@@ -416,13 +400,11 @@ int SBoardStartOverlay(void) {
             ? r_msg2_main(color, "CGColor", 0,0,0,0) : 0;
 
         if (kGroupFilled[g]) {
-            // Filled groups (HP bars, HP background): stroke off, fill on.
             r_msg2_main(shape, "setStrokeColor:", 0, 0,0,0);
             if (r_is_objc_ptr(cgcol)) r_msg2_main(shape, "setFillColor:", cgcol, 0,0,0);
             double lw = 0.0;
             r_msg2_main_raw(shape, "setLineWidth:", &lw, 8, NULL,0,NULL,0,NULL,0);
         } else {
-            // Stroke groups (box, bone, snapline, fov, aim assist).
             if (r_is_objc_ptr(cgcol)) r_msg2_main(shape, "setStrokeColor:", cgcol, 0,0,0);
             r_msg2_main(shape, "setFillColor:", 0, 0,0,0);
             double lw = 1.5;
@@ -521,11 +503,7 @@ void SBRemotePushESPFrame(UIView *espView) {
     static NSMutableData *ops = nil;
     if (!ops) ops = [NSMutableData dataWithCapacity:8192];
 
-    // mergePaths is unchanged: it still emits the original 16 layer markers
-    // (op 4 + idx). The decoder below folds idx into a group.
     if (!mergePaths(espView, ops)) {
-        // Empty frame: clear each group once, then skip. This is what makes
-        // "ESP off" actually disappear from SpringBoard.
         for (int g = 0; g < SBG_COUNT; g++) {
             if (g_sbGroupHadData[g]) {
                 sb_invoke_setpath(g, 0);
@@ -563,7 +541,6 @@ void SBRemotePushESPFrame(UIView *espView) {
             size_t len = frameBytes.length;
             const uint8_t *b = (const uint8_t *)frameBytes.bytes;
 
-            // Pass 1: which groups does this frame contain?
             uint8_t groupMask = 0;
             for (size_t i = 0; i + 1 < len; ) {
                 uint8_t op = b[i++];
@@ -576,8 +553,6 @@ void SBRemotePushESPFrame(UIView *espView) {
                 i += 16;
             }
 
-            // Pass 2: allocate fresh paths only for groups that have data,
-            // rotate the per-group ring, then decode the stream into them.
             CGMutablePathRef gpath[SBG_COUNT] = {0};
             double rectBuf[SBG_COUNT][512];
             int rectDoubles[SBG_COUNT] = {0};
@@ -592,7 +567,6 @@ void SBRemotePushESPFrame(UIView *espView) {
                 calls++;
                 if (!p) continue;
                 gpath[g] = (CGMutablePathRef)p;
-                // Retire the oldest path in this group's ring.
                 int slot = g_sbPathRingAt % SB_PATH_HOLD_FRAMES;
                 if (g_sbPathRing[g][slot]) {
                     dlsym_remote("CGPathRelease", g_sbPathRing[g][slot], 0,0,0,0,0,0,0);
@@ -608,8 +582,6 @@ void SBRemotePushESPFrame(UIView *espView) {
                 if (op == 4) {
                     uint8_t idx = b[i++];
                     curGroup = (idx < 16) ? kLayerGroupMap[idx] : -1;
-                    // Flush the previous group's rect buffer when the group
-                    // changes so rects never leak into the wrong colour.
                     continue;
                 }
                 if (curGroup < 0 || !gpath[curGroup]) {
@@ -617,10 +589,8 @@ void SBRemotePushESPFrame(UIView *espView) {
                     continue;
                 }
 
-                // Read the subpath until the next op==4 or a new moveTo.
                 double run[2048];
                 int rn = 0;
-                // push back current op into the loop
                 int pendingOp = op;
                 while (i < len || pendingOp) {
                     uint8_t curOp;
@@ -644,17 +614,6 @@ void SBRemotePushESPFrame(UIView *espView) {
 
                 if (np == 2) {
                     limbCount++;
-                    // Only snapline layers carry the two-point segments we
-                    // draw here. Layers 6..8 are the three snapline layers.
-                    // Anything else in this bucket is dropped (same as before).
-                    // Since curGroup already dropped the layer identity, we
-                    // re-check via idx below — track it during the layer
-                    // marker. Simplest: two-point segments are snaplines iff
-                    // they are in group cyan/yellow/red AND came from a
-                    // snapline layer. We approximate: draw when the last
-                    // seen idx was 6..8.
-                    // For now, draw all 2-point segments that map to a
-                    // stroked group; bones are not emitted at 2 points.
                     remote_write(ptsBuf, run, (size_t)rn * 8);
                     dlsym_remote("CGPathAddLines", (uint64_t)gpath[curGroup],
                                  0, ptsBuf, 2, 0,0,0,0);
@@ -662,7 +621,6 @@ void SBRemotePushESPFrame(UIView *espView) {
                     continue;
                 }
 
-                // Rectangle detection (same test as before, adapted to len).
                 int isRect = 0;
                 double rx = 0, ry = 0, rw = 0, rh = 0;
                 if (np == 4) {
@@ -707,14 +665,12 @@ void SBRemotePushESPFrame(UIView *espView) {
                     continue;
                 }
 
-                // Generic polyline.
                 remote_write(ptsBuf, run, (size_t)rn * 8);
                 dlsym_remote("CGPathAddLines", (uint64_t)gpath[curGroup],
                              0, ptsBuf, np, 0,0,0,0);
                 calls++;
             }
 
-            // Final flush of rect buffers.
             for (int g = 0; g < SBG_COUNT; g++) {
                 if (rectDoubles[g] >= 4) {
                     remote_write(ptsBuf, rectBuf[g], (size_t)rectDoubles[g] * 8);
@@ -724,8 +680,6 @@ void SBRemotePushESPFrame(UIView *espView) {
                 }
             }
 
-            // Push each group's path, and clear any group that went empty
-            // this frame so a dead player's last box does not linger.
             for (int g = 0; g < SBG_COUNT; g++) {
                 const uint8_t has = (groupMask & (1 << g)) ? 1 : 0;
                 if (has) {
@@ -789,6 +743,7 @@ void SBoardStopOverlay(void) {
         if (!remote_call_has_local_state()) { sb_forget_local_paint_state(); return; }
 
         if (r_is_objc_ptr(win) && !hot) {
+            // r_msg2_main_async: 6 args only.
             r_msg2_main_async(win, "setHidden:", 1, 0, 0, 0);
         }
         if (!hot) {
