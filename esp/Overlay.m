@@ -1,89 +1,177 @@
-//
-//  DirectOverlay.mm — ESP offscreen host (NOT Direct/SBSAccessibility overlay)
-//
-//  User direction: this build draws ONLY via SpringBoard RemoteCall.
-//  Local window exists solely so ESP_View's GCD timer runs and mirrors
-//  paths through SBRemotePushESPFrame. Window stays hidden/alpha=0.
-//
-#import "DirectOverlay.h"
-#import "../esp/esp.h"
-#import "../esp/ESPPrefs.h"
-#import "../esp/GameOffsets.h"
-#import "../esp/menu.h"
-#import "../../app/KeepAlive.h"
-#import <objc/runtime.h>
+#import "Overlay.h"
 
-static UIWindow *g_espHostWindow = nil;
+// ---------- draw config ----------
+#define BOX_COLOR   [UIColor colorWithRed:1 green:0.2 blue:0.2 alpha:0.9]
+#define TEXT_COLOR  [UIColor whiteColor]
+#define LINE_W      1.5f
 
-@interface ESPHostPassThroughView : UIView
-@end
-@implementation ESPHostPassThroughView
+// ---------- PassthroughWindow ----------
+@interface PassthroughWindow : UIWindow @end
+@implementation PassthroughWindow
 - (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
-    UIView *hit = [super hitTest:point withEvent:event];
-    if (hit == self) return nil;
-    return hit;
+    return nil;
 }
 @end
 
-@interface ESPHostVC : UIViewController
-@end
-@implementation ESPHostVC
-- (void)loadView {
-    self.view = [[ESPHostPassThroughView alloc] initWithFrame:CGRectZero];
+// ---------- ESPOverlayView ----------
+@implementation ESPOverlayView
+
+- (instancetype)initWithFrame:(CGRect)frame {
+    self = [super initWithFrame:frame];
+    self.backgroundColor = [UIColor clearColor];
+    self.opaque = NO;
+    self.userInteractionEnabled = NO;
+    return self;
 }
-- (void)viewDidLoad {
-    [super viewDidLoad];
-    self.view.backgroundColor = [UIColor clearColor];
-    self.view.userInteractionEnabled = YES;
+
+- (void)drawRect:(CGRect)rect {
+    CGContextRef ctx = UIGraphicsGetCurrentContext();
+    if (!ctx || !self.entities.count) return;
+
+    NSDictionary *attrs = @{
+        NSFontAttributeName            : [UIFont boldSystemFontOfSize:11],
+        NSForegroundColorAttributeName : TEXT_COLOR
+    };
+
+    for (NSDictionary *e in self.entities) {
+        int team = [e[@"team"] intValue];
+        UIColor *col = (team == 0) ? BOX_COLOR
+                                   : [UIColor colorWithRed:0.2 green:0.8 blue:1 alpha:0.9];
+
+        CGRect box = [e[@"box"] CGRectValue];
+
+        // bounding box
+        CGContextSetStrokeColorWithColor(ctx, col.CGColor);
+        CGContextSetLineWidth(ctx, LINE_W);
+        CGContextStrokeRect(ctx, box);
+
+        // corner ticks
+        float cw = box.size.width  * 0.2f;
+        float ch = box.size.height * 0.2f;
+        CGContextSetLineWidth(ctx, LINE_W * 2);
+
+        // top-left
+        CGContextMoveToPoint(ctx, box.origin.x, box.origin.y + ch);
+        CGContextAddLineToPoint(ctx, box.origin.x, box.origin.y);
+        CGContextAddLineToPoint(ctx, box.origin.x + cw, box.origin.y);
+        // top-right
+        CGContextMoveToPoint(ctx, CGRectGetMaxX(box) - cw, box.origin.y);
+        CGContextAddLineToPoint(ctx, CGRectGetMaxX(box), box.origin.y);
+        CGContextAddLineToPoint(ctx, CGRectGetMaxX(box), box.origin.y + ch);
+        // bottom-left
+        CGContextMoveToPoint(ctx, box.origin.x, CGRectGetMaxY(box) - ch);
+        CGContextAddLineToPoint(ctx, box.origin.x, CGRectGetMaxY(box));
+        CGContextAddLineToPoint(ctx, box.origin.x + cw, CGRectGetMaxY(box));
+        // bottom-right
+        CGContextMoveToPoint(ctx, CGRectGetMaxX(box) - cw, CGRectGetMaxY(box));
+        CGContextAddLineToPoint(ctx, CGRectGetMaxX(box), CGRectGetMaxY(box));
+        CGContextAddLineToPoint(ctx, CGRectGetMaxX(box), CGRectGetMaxY(box) - ch);
+        CGContextStrokePath(ctx);
+
+        // health bar
+        float hp = [e[@"hp"] floatValue];
+        if (hp > 0) {
+            float barW = 3;
+            float barH = box.size.height * hp;
+            CGRect barBg = CGRectMake(box.origin.x - 5, box.origin.y,
+                                      barW, box.size.height);
+            CGRect barFg = CGRectMake(box.origin.x - 5,
+                                      CGRectGetMaxY(box) - barH,
+                                      barW, barH);
+            CGContextSetFillColorWithColor(ctx,
+                [UIColor colorWithWhite:0 alpha:0.5].CGColor);
+            CGContextFillRect(ctx, barBg);
+
+            UIColor *hpCol = [UIColor colorWithRed:(1.0f - hp)
+                                             green:hp
+                                              blue:0
+                                             alpha:1];
+            CGContextSetFillColorWithColor(ctx, hpCol.CGColor);
+            CGContextFillRect(ctx, barFg);
+        }
+
+        // label
+        NSString *label = [NSString stringWithFormat:@"%@  %.0fm",
+                           e[@"name"] ?: @"?",
+                           [e[@"dist"] floatValue]];
+        CGSize sz = [label sizeWithAttributes:attrs];
+        CGPoint pt = CGPointMake(box.origin.x + (box.size.width - sz.width) * 0.5f,
+                                 box.origin.y - sz.height - 2);
+        [label drawAtPoint:pt withAttributes:attrs];
+    }
 }
-- (UIInterfaceOrientationMask)supportedInterfaceOrientations {
-    return UIInterfaceOrientationMaskAll;
-}
-- (BOOL)shouldAutorotate { return YES; }
+
 @end
 
-int StartESPHost(void) {
+// ---------- ESPOverlay ----------
+@implementation ESPOverlay {
+    PassthroughWindow *_window;
+    ESPOverlayView    *_view;
+    CADisplayLink     *_link;
+    NSArray           *_entities;
+    dispatch_queue_t   _lock;
+}
+
++ (instancetype)shared {
+    static ESPOverlay *s;
+    static dispatch_once_t t;
+    dispatch_once(&t, ^{ s = [ESPOverlay new]; });
+    return s;
+}
+
+- (instancetype)init {
+    self = [super init];
+    _lock = dispatch_queue_create("esp.lock", DISPATCH_QUEUE_SERIAL);
+    return self;
+}
+
+- (void)start {
     dispatch_async(dispatch_get_main_queue(), ^{
-        if (g_espHostWindow) return;
-
-        [[KeepAlive shared] start];
-        ESPPrefsSync();
-        ESPSyncFromPrefs();
-        GameOffsetsReload();
-
-        ESPHostVC *vc = [[ESPHostVC alloc] init];
         CGRect screen = [UIScreen mainScreen].bounds;
 
-        ESP_View *espView = [[ESP_View alloc] initWithFrame:screen];
-        espView.backgroundColor = [UIColor clearColor];
-        espView.userInteractionEnabled = NO;
-        [vc.view addSubview:espView];
+        self->_window = [[PassthroughWindow alloc] initWithFrame:screen];
+        self->_window.windowLevel        = UIWindowLevelAlert + 100;
+        self->_window.backgroundColor    = [UIColor clearColor];
+        self->_window.userInteractionEnabled = NO;
+        self->_window.hidden             = NO;
 
-        // Menu stays local for toggles; not an all-apps overlay.
-        MenuView *menuView = [[MenuView alloc] initWithFrame:screen];
-        menuView.userInteractionEnabled = YES;
-        [vc.view addSubview:menuView];
+        UIViewController *vc = [UIViewController new];
+        vc.view.backgroundColor = [UIColor clearColor];
+        self->_window.rootViewController = vc;
 
-        g_espHostWindow = [[UIWindow alloc] initWithFrame:screen];
-        g_espHostWindow.rootViewController = vc;
-        g_espHostWindow.backgroundColor = [UIColor clearColor];
-        g_espHostWindow.windowLevel = UIWindowLevelNormal - 1;
-        g_espHostWindow.alpha = 0.0;
-        // hidden=NO is what keeps the window and its ESP_View alive so the
-        // GCD timer in ESP_View fires. makeKeyAndVisible is NOT needed: the
-        // timer is a dispatch_source on the main queue, not a UIWindow
-        // event, so it runs regardless of key status. Removing it avoids a
-        // transparent key window competing with MenuView for key focus,
-        // which is what the earlier comment was trying to work around.
-        g_espHostWindow.hidden = NO; // must be in hierarchy for timer/views
-        g_espHostWindow.userInteractionEnabled = YES;
-        // [g_espHostWindow makeKeyAndVisible];  ← removed (watchdog/thermal)
+        self->_view = [[ESPOverlayView alloc] initWithFrame:screen];
+        [self->_window addSubview:self->_view];
 
-        NSLog(@"[ESPHost] offscreen ESP_View host started (draw via SpringBoard only)");
+        self->_link = [CADisplayLink displayLinkWithTarget:self
+                                                  selector:@selector(_tick:)];
+        self->_link.preferredFramesPerSecond = 60;
+        [self->_link addToRunLoop:[NSRunLoop mainRunLoop]
+                          forMode:NSRunLoopCommonModes];
+
+        NSLog(@"[ESP] overlay started");
     });
-    return 0;
 }
 
-int StartDirectOverlay(void) {
-    return StartESPHost();
+- (void)stop {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [self->_link invalidate];
+        self->_link = nil;
+        self->_window.hidden = YES;
+        self->_window = nil;
+    });
 }
+
+- (void)updateEntities:(NSArray *)entities {
+    dispatch_async(_lock, ^{
+        self->_entities = [entities copy];
+    });
+}
+
+- (void)_tick:(CADisplayLink *)link {
+    __block NSArray *snap;
+    dispatch_sync(_lock, ^{ snap = self->_entities; });
+    self->_view.entities = snap;
+    [self->_view setNeedsDisplay];
+}
+
+@end
