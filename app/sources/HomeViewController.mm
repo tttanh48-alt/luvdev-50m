@@ -1321,7 +1321,7 @@ static void HomeVCBootLogSink(NSString *line) {
     if (bootText.length > 8000) [bootText deleteCharactersInRange:NSMakeRange(0, bootText.length - 8000)];
     NSString *snap = [bootText copy];
     self.logTextView.text = snap;
-    [self.logTextView scrollToVisibleRect:CGRectMake(0, self.logTextView.contentSize.height - 1, 1, 1) animated:NO];
+    [self.logTextView scrollRangeToVisible:NSMakeRange(snap.length, 0)];
 }
 
 - (void)refreshHUDState {
