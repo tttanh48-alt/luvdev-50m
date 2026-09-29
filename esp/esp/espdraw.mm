@@ -6,12 +6,7 @@
 #import <UIKit/UIKit.h>
 #include <cmath>
 
-// Khai báo biến chứa mảng ảnh Súng từ WeaponTextures.mm
 extern NSMutableDictionary *gWeaponTextures;
-
-// NOTE: templates (ReadAddr<T>) and C++ types (Vector3) CANNOT be inside
-// extern "C" — so the imports stay above; only the ESP entry points that
-// esp.h declares with C linkage get wrapped below.
 
 #ifdef __cplusplus
 extern "C" {
@@ -23,9 +18,6 @@ static inline float Clamp01f(float v) {
     return v;
 }
 
-// ==========================================
-// TỐI ƯU HÓA BỘ NHỚ FONT
-// ==========================================
 static UIFont *cachedFonts[40] = {nil};
 
 UIFont *GetCustomFont(CGFloat size) {
@@ -59,9 +51,6 @@ BOOL RenderFOVCirclePath(
     float fovRadius
 ) {
     if (!path || !aimbotEnabled || fovRadius <= 0) return NO;
-    // FIX "FOV hình vuông": SB mirror serializer (serFunc) flatten curve → line,
-    // AddEllipse thành gạch vuông. Vẽ polyline 72 đoạn — giữ nguyên hình tròn
-    // qua cả in-app layer lẫn mirror path (chỉ có Move/Line ops).
     const int kSegs = 72;
     const float cx = viewWidth / 2.0f;
     const float cy = viewHeight / 2.0f;
@@ -80,30 +69,19 @@ BOOL RenderFOVCirclePath(
 void RenderTotalEnemyCount(ESPAddTextCallback textCallback, void *callbackContext, int totalCount, float layerWidth) {
     if (!textCallback || totalCount < 0) return;
     NSString *countStr = [NSString stringWithFormat:@"%d", totalCount];
-
-    // [FIX LAG]: Bỏ tính toán size font, cấp khung rộng và ép tự căn giữa (NO)
     textCallback(callbackContext, countStr, CGRectMake((layerWidth / 2.0f) - 50.0f, 45.0f, 100.0f, 35.0f), [UIColor redColor], 26.0f, NO);
 }
 
-// ==========================================
-// HÀM ĐỌC ID SÚNG
-// ==========================================
 uint32_t CurrentWeaponID(uint64_t PawnObject) {
     if (!isVaildPtr(PawnObject)) return UINT32_MAX;
-
     uint32_t weaponID = ReadAddr<uint32_t>(PawnObject + 0x13C);
-    if (weaponID == 0) return 1; // Fallback về 1 (Tay không)
-
+    if (weaponID == 0) return 1;
     return weaponID;
 }
 
-// ==========================================
-// HÀM FALLBACK TÊN SÚNG
-// ==========================================
 NSString* WeaponNameForPlayerNS(uint64_t PawnObject) {
     uint32_t wid = CurrentWeaponID(PawnObject);
     if (wid == UINT32_MAX) return @"";
-
     switch(wid) {
         case 0:
         case 1:   return @"Tay không";
@@ -129,9 +107,7 @@ NSString* WeaponNameForPlayerNS(uint64_t PawnObject) {
 }
 
 // ============================================================
-// CORE RENDER — dùng cho fast path (RenderESPForPawnEx). Nhận sẵn head/hip/bot/knocked
-// từ caller để fast path khỏi đọc lại memory (tránh double reads
-// trong trận đông người). Bones/chân vẫn được đọc từ PawnObject.
+// CORE RENDER
 // ============================================================
 static void ESPRenderPawnCore(
     ESPGeometryBuffers *buffers,
@@ -194,11 +170,8 @@ static void ESPRenderPawnCore(
     const float margin = layerWidth * 0.6f;
     if (w2sHead.x < -margin || w2sHead.x > layerWidth + margin || w2sHead.y < -margin || w2sHead.y > layerHeight + margin) return;
 
-    // ==========================================
-    // THUẬT TOÁN BOX CHUẨN XÁC
-    // ==========================================
+    // Box
     float top = w2sHead.y;
-    // Chân nào chạm đất sâu nhất thì lấy chân đó làm đáy Box
     float bottom = fmaxf(w2sToe.y, w2sLeftToe.y);
     if (top > bottom) { float temp = top; top = bottom; bottom = temp; }
 
@@ -212,19 +185,16 @@ static void ESPRenderPawnCore(
     float boxHeight, boxWidth, x, y;
 
     if (isKnocked || CurHP <= 0 || worldHeight < 0.7f) {
-        // GỤC / CHẾT / NẰM MÓC
         boxHeight = stdHeight * 0.35f;
         boxWidth  = stdHeight * 0.45f;
         x = w2sHip.x - boxWidth * 0.5f;
         y = w2sHip.y - boxHeight * 0.5f;
     } else if (worldHeight < 1.35f) {
-        // NGỒI: Box lùn theo thực tế nhưng giữ nguyên bề ngang của Đứng
         boxHeight = screenRealHeight;
         boxWidth  = stdHeight * 0.45f;
         x = w2sHead.x - boxWidth * 0.5f;
         y = top;
     } else {
-        // ĐỨNG / CHẠY / NHẢY: Box bao trọn 100%
         boxHeight = screenRealHeight;
         boxWidth  = boxHeight * 0.45f;
         x = w2sHead.x - boxWidth * 0.5f;
@@ -296,7 +266,6 @@ static void ESPRenderPawnCore(
         } else if (textCallback) {
             NSString *wname = WeaponNameForPlayerNS(PawnObject);
             if (wname && wname.length > 0) {
-                // [FIX LAG]: Cấp khung cố định và căn giữa bằng NO
                 textCallback(callbackContext, wname, CGRectMake(wCX - 50.0f, wTY - wIconH - 2, 100.0f, wIconH), [UIColor yellowColor], 6.5f, NO);
             }
         }
@@ -325,37 +294,32 @@ static void ESPRenderPawnCore(
     }
 
     // ---------------------------------------------------------
-    // NAME
-    // ---------------------------------------------------------
-    if (isName && textCallback) {
-        NSString *dispName = (isEspBot && isBot) ? NSSENCRYPT("BOT") : Name;
-        if (dispName.length > 0) {
-            // [FIX LAG]: Xóa sizeWithAttributes, căn giữa bằng cờ NO
-            textCallback(callbackContext, dispName, CGRectMake(centerX - 100.0f, y - dynFontSize - 6.0f, 200.0f, dynFontSize + 4.0f), [UIColor yellowColor], dynFontSize, NO);
-        }
-    }
-
-    // ---------------------------------------------------------
-    // DISTANCE
-    // ---------------------------------------------------------
-    if (isDis && textCallback) {
-        NSString *distString = [NSString stringWithFormat:NSSENCRYPT("[%dM]"), (int)dis];
-        // [FIX LAG]: Xóa sizeWithAttributes, căn giữa bằng cờ NO
-        textCallback(callbackContext, distString, CGRectMake(centerX - 100.0f, y + boxHeight + 2.0f, 200.0f, dynFontSize + 4.0f), [UIColor whiteColor], dynFontSize, NO);
-    }
-
-    // ---------------------------------------------------------
-    // THANH MÁU
+    // HEALTH BAR — HORIZONTAL, ABOVE THE BOX
+    //
+    // Was a vertical 2pt bar to the LEFT of the box (barX = x - 2 - 1,
+    // full box height). The user asked for it horizontal above the head.
+    // The fill is anchored to the left edge and grows to the right, the
+    // same direction the box is read.
+    //
+    // Position: hpBarY = y - hpBarH - 2 puts it 2pt above the box top,
+    // where the name text would sit. The name has been pushed further up
+    // (see NAME block below) so they do not overlap.
     // ---------------------------------------------------------
     if (isHealth) {
         float healthRatio = Clamp01f((float)CurHP / (float)fmaxf(MaxHP, 1.0f));
-        const CGFloat barWidth = 2.0f;
+        const CGFloat hpBarH = 3.0f;
+        const CGFloat hpBarW = boxWidth;
+        const CGFloat hpBarX = x;
+        const CGFloat hpBarY = y - hpBarH - 2.0f;
+        const CGFloat hpFillW = hpBarW * healthRatio;
 
-        CGFloat barX = x - barWidth - 1.0f;
-        CGFloat barHeight = boxHeight;
-        CGFloat filledTop = y + barHeight - (barHeight * healthRatio);
+        // Black background across the full width.
+        CGPathAddRect(buffers->bgFillBlackPath, NULL,
+                      CGRectMake(hpBarX, hpBarY, hpBarW, hpBarH));
+        buffers->bgFillBlackDirty = true;
 
-        CGRect fillRect = CGRectMake(barX, filledTop, barWidth, barHeight * healthRatio);
+        // Coloured fill from the left edge.
+        CGRect fillRect = CGRectMake(hpBarX, hpBarY, hpFillW, hpBarH);
         if (CurHP >= 150) {
             CGPathAddRect(buffers->hpFillGreenPath, NULL, fillRect);
             buffers->hpFillGreenDirty = true;
@@ -367,12 +331,36 @@ static void ESPRenderPawnCore(
             buffers->hpFillRedDirty = true;
         }
     }
+
+    // ---------------------------------------------------------
+    // NAME — pushed above the HP bar
+    // Was: y - dynFontSize - 6. Now shifted up by HP bar height (3) +
+    // the 2pt gap + a small pad so the two never touch.
+    // ---------------------------------------------------------
+    if (isName && textCallback) {
+        NSString *dispName = (isEspBot && isBot) ? NSSENCRYPT("BOT") : Name;
+        if (dispName.length > 0) {
+            CGFloat nameY = y - dynFontSize - 6.0f;
+            if (isHealth) nameY -= 5.0f; // clear the HP bar
+            textCallback(callbackContext, dispName,
+                         CGRectMake(centerX - 100.0f, nameY, 200.0f, dynFontSize + 4.0f),
+                         [UIColor yellowColor], dynFontSize, NO);
+        }
+    }
+
+    // ---------------------------------------------------------
+    // DISTANCE
+    // ---------------------------------------------------------
+    if (isDis && textCallback) {
+        NSString *distString = [NSString stringWithFormat:NSSENCRYPT("[%dM]"), (int)dis];
+        textCallback(callbackContext, distString,
+                     CGRectMake(centerX - 100.0f, y + boxHeight + 2.0f, 200.0f, dynFontSize + 4.0f),
+                     [UIColor whiteColor], dynFontSize, NO);
+    }
 }
 
 // ==========================================
-// HÀM VẼ ESP — FAST PATH
-// Caller (updateFrame) đã đọc sẵn head/hip/bot/knocked trong snapshot
-// (tránh double memory reads khi trận đông người)
+// FAST PATH
 // ==========================================
 void RenderESPForPawnEx(
     ESPGeometryBuffers *buffers,
