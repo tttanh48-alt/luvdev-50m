@@ -69,9 +69,15 @@ int StartESPHost(void) {
         g_espHostWindow.backgroundColor = [UIColor clearColor];
         g_espHostWindow.windowLevel = UIWindowLevelNormal - 1;
         g_espHostWindow.alpha = 0.0;
+        // hidden=NO is what keeps the window and its ESP_View alive so the
+        // GCD timer in ESP_View fires. makeKeyAndVisible is NOT needed: the
+        // timer is a dispatch_source on the main queue, not a UIWindow
+        // event, so it runs regardless of key status. Removing it avoids a
+        // transparent key window competing with MenuView for key focus,
+        // which is what the earlier comment was trying to work around.
         g_espHostWindow.hidden = NO; // must be in hierarchy for timer/views
         g_espHostWindow.userInteractionEnabled = YES;
-        [g_espHostWindow makeKeyAndVisible];
+        // [g_espHostWindow makeKeyAndVisible];  ← removed (watchdog/thermal)
 
         NSLog(@"[ESPHost] offscreen ESP_View host started (draw via SpringBoard only)");
     });
