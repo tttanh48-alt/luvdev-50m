@@ -63,8 +63,6 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
 @property (nonatomic, strong) UISwitch *aimBehindWallSwitch;
 @property (nonatomic, strong) UILabel *silentAimLabel;
 @property (nonatomic, strong) UISwitch *silentAimSwitch;
-@property (nonatomic, strong) UILabel *espLabel;
-@property (nonatomic, strong) UISwitch *espSwitch;
 @property (nonatomic, strong) UILabel *camLabel;
 @property (nonatomic, strong) UISwitch *camSwitch;
 @property (nonatomic, strong) UISlider *camSlider;
@@ -72,6 +70,8 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
 
 @property (nonatomic, strong) UIView *espCard;
 @property (nonatomic, strong) UILabel *espCardTitle;
+@property (nonatomic, strong) UILabel *espLabel;
+@property (nonatomic, strong) UISwitch *espSwitch;
 @property (nonatomic, strong) UILabel *espBoxLabel;
 @property (nonatomic, strong) UISwitch *espBoxSwitch;
 @property (nonatomic, strong) UILabel *espLineLabel;
@@ -221,8 +221,6 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _aimBehindWallSwitch.onTintColor = VNAccent();
     _silentAimLabel.textColor = VNText();
     _silentAimSwitch.onTintColor = VNAccent();
-    _espLabel.textColor = VNText();
-    _espSwitch.onTintColor = VNAccent();
     _camLabel.textColor = VNText();
     _camSwitch.onTintColor = VNAccent();
     _camSlider.minimumTrackTintColor = VNAccent();
@@ -230,6 +228,8 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
 
     _espCard.backgroundColor = VNCard();
     _espCardTitle.textColor = VNMuted();
+    _espLabel.textColor = VNText();
+    _espSwitch.onTintColor = VNAccent();
     for (UILabel *l in @[_espBoxLabel, _espLineLabel, _espBoneLabel,
                           _espHealthLabel, _espCountLabel, _espDistanceLimitLabel]) {
         l.textColor = VNText();
@@ -381,7 +381,6 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _contentView.backgroundColor = VNBg();
     [_scrollView addSubview:_contentView];
 
-    // Chỉ giữ settings button (đã bỏ close & trash)
     _settingsBtn = [self makeIconButton:@"gearshape.fill"];
     [_settingsBtn addTarget:self action:@selector(openSettings) forControlEvents:UIControlEventTouchUpInside];
     [self.view addSubview:_settingsBtn];
@@ -432,7 +431,7 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     [_killAllButton addTarget:self action:@selector(killAllTapped:) forControlEvents:UIControlEventTouchUpInside];
     [_controlCard addSubview:_killAllButton];
 
-    // Toggles card
+    // Toggles card (chỉ còn Aimbot, Aim Behind Wall, Silent Aim, CamPC)
     _togglesCard = [self makeCard];
     [_contentView addSubview:_togglesCard];
 
@@ -470,17 +469,6 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     [_silentAimSwitch addTarget:self action:@selector(silentAimSwitchChanged:) forControlEvents:UIControlEventValueChanged];
     [_togglesCard addSubview:_silentAimSwitch];
 
-    _espLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-    _espLabel.text = @"Bật ESP";
-    _espLabel.font = VNFont(17, UIFontWeightSemibold);
-    _espLabel.textColor = VNText();
-    [_togglesCard addSubview:_espLabel];
-    _espSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
-    _espSwitch.onTintColor = VNAccent();
-    _espSwitch.on = ESPPrefsBool(@"EnableESP", YES);
-    [_espSwitch addTarget:self action:@selector(espSwitchChanged:) forControlEvents:UIControlEventValueChanged];
-    [_togglesCard addSubview:_espSwitch];
-
     _camLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     _camLabel.text = @"Camera Xa (CamPC)";
     _camLabel.font = VNFont(17, UIFontWeightSemibold);
@@ -514,6 +502,18 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _espCardTitle.font = VNFont(13, UIFontWeightBold);
     _espCardTitle.textColor = VNMuted();
     [_espCard addSubview:_espCardTitle];
+
+    // "Bật ESP" — dòng đầu tiên trong ESP card
+    _espLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+    _espLabel.text = @"Bật ESP";
+    _espLabel.font = VNFont(17, UIFontWeightSemibold);
+    _espLabel.textColor = VNText();
+    [_espCard addSubview:_espLabel];
+    _espSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
+    _espSwitch.onTintColor = VNAccent();
+    _espSwitch.on = ESPPrefsBool(@"EnableESP", YES);
+    [_espSwitch addTarget:self action:@selector(espSwitchChanged:) forControlEvents:UIControlEventValueChanged];
+    [_espCard addSubview:_espSwitch];
 
     _espBoxLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     _espBoxLabel.text = @"Box";
@@ -824,10 +824,10 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _controlSubtitleLabel.frame = CGRectMake(textX, 48, textW, 36);
     y = CGRectGetMaxY(_controlCard.frame) + 16;
 
-    // ===== TOGGLES (5 rows + slider) =====
+    // ===== TOGGLES (4 rows + slider) =====
     CGFloat toggleRowH = 62.0f;
     CGFloat sliderAreaH = 82.0f;
-    CGFloat togglesH = toggleRowH * 5 + sliderAreaH;
+    CGFloat togglesH = toggleRowH * 4 + sliderAreaH;
     _togglesCard.frame = CGRectMake(xPad, y, cardW, togglesH);
 
     CGFloat rowY = 0;
@@ -843,10 +843,6 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _silentAimSwitch.frame = CGRectMake(cardW - 71, rowY + (toggleRowH - 31) * 0.5f, 51, 31);
     rowY += toggleRowH;
 
-    _espLabel.frame = CGRectMake(20, rowY, cardW - 110, toggleRowH);
-    _espSwitch.frame = CGRectMake(cardW - 71, rowY + (toggleRowH - 31) * 0.5f, 51, 31);
-    rowY += toggleRowH;
-
     _camLabel.frame = CGRectMake(20, rowY, cardW - 110, toggleRowH);
     _camSwitch.frame = CGRectMake(cardW - 71, rowY + (toggleRowH - 31) * 0.5f, 51, 31);
     rowY += toggleRowH;
@@ -855,19 +851,24 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _camValueLabel.frame = CGRectMake(cardW - 64, rowY + 26, 48, 26);
     y = CGRectGetMaxY(_togglesCard.frame) + 16;
 
-    // ===== ESP ELEMENTS =====
+    // ===== ESP ELEMENTS (6 rows: Bật ESP + 5 element + slider) =====
     CGFloat espTitleH = 40.0f;
     CGFloat espRowH = 60.0f;
     CGFloat espSliderArea = 82.0f;
-    CGFloat espH = espTitleH + espRowH * 5 + espSliderArea;
+    CGFloat espH = espTitleH + espRowH * 6 + espSliderArea;
     _espCard.frame = CGRectMake(xPad, y, cardW, espH);
     _espCardTitle.frame = CGRectMake(20, 14, cardW - 40, 20);
 
+    // Row 1: Bật ESP
+    _espLabel.frame = CGRectMake(20, espTitleH, cardW - 110, espRowH);
+    _espSwitch.frame = CGRectMake(cardW - 71, espTitleH + (espRowH - 31) * 0.5f, 51, 31);
+
+    // Row 2-6: Box, Snapline, Bone, Health, Count
     NSArray<UILabel *> *espLabelsArr = @[_espBoxLabel, _espLineLabel, _espBoneLabel,
                                           _espHealthLabel, _espCountLabel];
     NSArray<UISwitch *> *espSwitchesArr = @[_espBoxSwitch, _espLineSwitch, _espBoneSwitch,
                                              _espHealthSwitch, _espCountSwitch];
-    CGFloat espY = espTitleH;
+    CGFloat espY = espTitleH + espRowH;
     for (NSUInteger i = 0; i < 5; i++) {
         UILabel *l = espLabelsArr[i];
         UISwitch *s = espSwitchesArr[i];
