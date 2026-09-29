@@ -327,7 +327,7 @@ uint64_t ds_translate_page(uint64_t page_va) {
 // Fl0rk DarkSwordMemoryProvider cache shape:
 //   _pageSlots[256] {VMShmem + lastUse}, _recentPageSlots[8], soft-age on txn end,
 //   NSRecursiveLock across map+insert, degraded after 3 consecutive map failures.
-#define DS_PAGE_CACHE_SLOTS 256
+#define DS_PAGE_CACHE_SLOTS 512
 #define DS_RECENT_SLOTS 8
 #define DS_FAIL_DEGRADE_THRESHOLD 3
 
