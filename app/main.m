@@ -10,7 +10,7 @@
 #import <UIKit/UIKit.h>
 #import <string.h>
 #import "MainApplication.h"
-#import "HUDMainApplicationDelegate.h"
+#import "MainApplicationDelegate.h"
 
 int HUDMainEntry(int argc, char *argv[]); // esp/hud/HUDApp.mm
 
@@ -21,6 +21,6 @@ int main(int argc, char *argv[]) {
         }
         return UIApplicationMain(argc, argv,
                                  NSStringFromClass([MainApplication class]),
-                                 NSStringFromClass([HUDMainApplicationDelegate class]));
+                                 NSStringFromClass([MainApplicationDelegate class]));
     }
 }
