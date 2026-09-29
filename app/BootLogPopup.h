@@ -5,7 +5,7 @@
 
 @interface BootLogPopup : UIView
 + (instancetype)shared;
-+ (void)show;                       // present over current window
++ (void)show;
 - (void)appendLine:(NSString *)line;
 - (void)dismissAfter:(NSTimeInterval)delay;
 @end
