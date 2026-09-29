@@ -2259,14 +2259,14 @@ void ESPSyncFromPrefs(void) {
     isESP2     = ESPPrefsBool(@"EnableESP2", NO);
     isBox      = ESPPrefsBool(@"Box", YES);
     boxMode    = (int)ESPPrefsFloat(@"BoxMode", 0.0f);
-    isBone     = ESPPrefsBool(@"Bone", YES);
+    isBone     = NO;
     isHealth   = ESPPrefsBool(@"Health", YES);
-    isName     = ESPPrefsBool(@"Name", YES);
+    isName     = NO;
     // "Distance" is ESP toggle (bool). Aim range uses dedicated "AimDistance".
     isDis      = ESPPrefsBool(@"Distance", YES);
     isLine     = ESPPrefsBool(@"Line", YES);
     isEspBot   = ESPPrefsBool(@"EspBot", YES);
-    isWeapon   = ESPPrefsBool(@"Weapon", NO);
+    isWeapon   = NO;
     isCount    = ESPPrefsBool(@"Count", YES);
     isAlert360 = ESPPrefsBool(@"Alert360", NO);
     isAlertNum = ESPPrefsBool(@"AlertNum", NO);
@@ -3600,7 +3600,7 @@ static inline uint64_t ESPPhaseNowUS(void) {
     const uint64_t entryStride = kDictEntryStrideBytePlayer ? kDictEntryStrideBytePlayer : 0x28;
     const uint64_t entryValueOff = kDictEntryValueOffByte ? kDictEntryValueOffByte : 0x20;
     int loopCount = slotCap;
-    if (loopCount > 512) loopCount = 512;
+    if (loopCount > 128) loopCount = 128;
 
     for (int i = 0; i < loopCount; i++) {
         uint64_t ent = entriesBase + entryStride * (uint64_t)i;
