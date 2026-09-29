@@ -351,7 +351,7 @@ uint64_t ds_translate_page(uint64_t page_va) {
 // once is what produced "Taking non-sleepable RW lock with preemption enabled"
 // (see the note in ds_end_read_transaction). Spreading the same total over many
 // transactions keeps the port deallocations apart in time.
-#define DS_MAX_EVICT_PER_TXN 4
+#define DS_MAX_EVICT_PER_TXN 8
 
 static struct {
     uint64_t pageVA;
