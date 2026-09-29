@@ -144,7 +144,7 @@
 
         self->_link = [CADisplayLink displayLinkWithTarget:self
                                                   selector:@selector(_tick:)];
-        self->_link.preferredFramesPerSecond = 60;
+        self->_link.preferredFramesPerSecond = 30;
         [self->_link addToRunLoop:[NSRunLoop mainRunLoop]
                           forMode:NSRunLoopCommonModes];
 
