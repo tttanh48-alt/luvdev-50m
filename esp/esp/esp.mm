@@ -3623,7 +3623,11 @@ static inline uint64_t ESPPhaseNowUS(void) {
         // Skip self: pointer, UserID, or PlayerID (local pointer can mismatch after death/rejoin).
         if (isSamePlayerAsLocal(myPawnObject, PawnObject)) continue;
         // Skip teammates when local is known.
-        if (isVaildPtr(myPawnObject) && isLocalTeamMate(myPawnObject, PawnObject)) continue;
+        if (isVaildPtr(myPawnObject) &&
+    isLocalTeamMate(myPawnObject, PawnObject)) {
+    continue;
+}
+
 
         // HP/knocked EVERY frame (stale cache was the floating "ghost ESP" after kills).
         // Bot flag can lag 1 frame; vis only when Check Visible is on.
