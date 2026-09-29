@@ -17,17 +17,19 @@ static void HomeVCBootLogSink(NSString *line);
 
 static const CGFloat kMenuButtonSize = 56.0f;
 
-#pragma mark - VN TOOL dark navy theme
-static UIColor *VNBg(void)     { return [UIColor colorWithRed:0.043 green:0.059 blue:0.078 alpha:1.0]; }
-static UIColor *VNCard(void)   { return [UIColor colorWithRed:0.086 green:0.106 blue:0.133 alpha:1.0]; }
-static UIColor *VNLine(void)   { return [UIColor colorWithRed:0.188 green:0.212 blue:0.239 alpha:1.0]; }
-static UIColor *VNText(void)   { return [UIColor colorWithRed:0.902 green:0.929 blue:0.953 alpha:1.0]; }
-static UIColor *VNMuted(void)  { return [UIColor colorWithRed:0.545 green:0.580 blue:0.620 alpha:1.0]; }
-static UIColor *VNAccent(void) { return [UIColor colorWithRed:0.247 green:0.725 blue:0.314 alpha:1.0]; }
-static UIColor *VNBlue(void)   { return [UIColor colorWithRed:0.345 green:0.651 blue:1.000 alpha:1.0]; }
-static UIColor *VNOrange(void) { return [UIColor colorWithRed:0.941 green:0.533 blue:0.243 alpha:1.0]; }
-static UIColor *VNRed(void)    { return [UIColor colorWithRed:0.973 green:0.318 blue:0.286 alpha:1.0]; }
-static UIColor *VNPanel2(void) { return [UIColor colorWithRed:0.129 green:0.149 blue:0.176 alpha:1.0]; }
+#pragma mark - VN TOOL dark green theme (giống ảnh)
+
+static UIColor *VNBg(void)       { return [UIColor colorWithRed:0.07 green:0.07 blue:0.07 alpha:1.0]; }
+static UIColor *VNCard(void)     { return [UIColor colorWithRed:0.12 green:0.12 blue:0.12 alpha:1.0]; }
+static UIColor *VNPanel2(void)   { return [UIColor colorWithRed:0.16 green:0.16 blue:0.16 alpha:1.0]; }
+static UIColor *VNLine(void)     { return [UIColor colorWithRed:0.22 green:0.22 blue:0.22 alpha:1.0]; }
+static UIColor *VNText(void)     { return [UIColor colorWithWhite:0.96 alpha:1.0]; }
+static UIColor *VNMuted(void)    { return [UIColor colorWithWhite:0.58 alpha:1.0]; }
+static UIColor *VNAccent(void)   { return [UIColor colorWithRed:0.30 green:0.85 blue:0.42 alpha:1.0]; }
+static UIColor *VNAccentDim(void){ return [UIColor colorWithRed:0.22 green:0.62 blue:0.31 alpha:1.0]; }
+static UIColor *VNBlue(void)     { return VNAccent(); }
+static UIColor *VNOrange(void)   { return VNAccent(); }
+static UIColor *VNRed(void)      { return [UIColor colorWithRed:0.85 green:0.25 blue:0.25 alpha:1.0]; }
 
 static UIView *VNMakeCard(void) {
     UIView *v = [[UIView alloc] init];
@@ -53,6 +55,7 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
 @property (nonatomic, strong) UILabel *controlTitleLabel;
 @property (nonatomic, strong) UILabel *controlSubtitleLabel;
 @property (nonatomic, strong) UIButton *startButton;
+@property (nonatomic, strong) UIButton *killAllButton;
 
 @property (nonatomic, strong) UIView *togglesCard;
 @property (nonatomic, strong) UILabel *aimbotLabel;
@@ -209,13 +212,7 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     [self presentViewController:nav animated:YES completion:nil];
 }
 
-// Close button. NEVER call suspend or exit here — the kernel exploit is
-// holding a live task port and a corrupted socket primitive, and tearing
-// down the process while that state is active makes SpringBoard panic and
-// the device reboots. The only safe way to hide the config UI is to hand
-// control back to iOS by launching another app. iOS backgrounds us, the
-// offscreen ESP_View timer keeps mirroring to SpringBoard, and the kernel
-// state stays untouched.
+// Close button: NEVER suspend/exit — kernel exploit đang giữ task port.
 - (void)closeAppTapped:(id)sender {
     (void)sender;
 
@@ -252,15 +249,20 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
 - (void)applyTheme {
     self.view.backgroundColor = VNBg();
     _titleLabel.textColor = VNText();
-    _titleLabel.font = VNFont(30, UIFontWeightBold);
+    _titleLabel.font = VNFont(28, UIFontWeightBold);
 
+    // Control
     _controlCard.backgroundColor = VNCard();
     _controlCard.layer.borderColor = VNLine().CGColor;
     _controlTitleLabel.textColor = VNText();
     _controlSubtitleLabel.textColor = VNMuted();
     _startButton.backgroundColor = VNAccent();
-    [_startButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    [_startButton setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
+    _killAllButton.backgroundColor = VNPanel2();
+    _killAllButton.layer.borderColor = VNRed().CGColor;
+    [_killAllButton setTitleColor:VNRed() forState:UIControlStateNormal];
 
+    // Toggles
     _togglesCard.backgroundColor = VNCard();
     _togglesCard.layer.borderColor = VNLine().CGColor;
     _aimbotLabel.textColor = VNText();
@@ -274,6 +276,7 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _camSlider.minimumTrackTintColor = VNAccent();
     _camValueLabel.textColor = VNMuted();
 
+    // ESP
     _espCard.backgroundColor = VNCard();
     _espCard.layer.borderColor = VNLine().CGColor;
     _espCardTitle.textColor = VNMuted();
@@ -288,6 +291,7 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _espDistanceLimitSlider.minimumTrackTintColor = VNAccent();
     _espDistanceLimitValueLabel.textColor = VNMuted();
 
+    // Aimbot
     _aimCard.backgroundColor = VNCard();
     _aimCard.layer.borderColor = VNLine().CGColor;
     _fovLabel.textColor = VNText();
@@ -295,23 +299,28 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _fovValueLabel.textColor = VNMuted();
     _triggerLabel.textColor = VNText();
     _triggerSegment.selectedSegmentTintColor = VNAccent();
+    _triggerSegment.backgroundColor = VNPanel2();
     _aimPosLabel.textColor = VNText();
     _aimPosSegment.selectedSegmentTintColor = VNAccent();
+    _aimPosSegment.backgroundColor = VNPanel2();
     _aimBehindWallLabel.textColor = VNText();
     _aimBehindWallSwitch.onTintColor = VNAccent();
 
+    // Version
     _versionSectionLabel.textColor = VNMuted();
     _ffMaxCard.backgroundColor = VNCard();
     _ffCard.backgroundColor = VNCard();
     _ffMaxNameLabel.textColor = VNText();
     _ffNameLabel.textColor = VNText();
 
+    // Status
     _statusCard.backgroundColor = VNCard();
     _statusCard.layer.borderColor = VNLine().CGColor;
     _statusLabel.textColor = VNText();
-    _openGameButton.backgroundColor = VNOrange();
-    [_openGameButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    _openGameButton.backgroundColor = VNAccent();
+    [_openGameButton setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
 
+    // License / Auth
     _licenseCard.backgroundColor = VNCard();
     _licenseCard.layer.borderColor = VNLine().CGColor;
     _authCard.backgroundColor = VNCard();
@@ -321,13 +330,15 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _authTitleLabel.textColor = VNMuted();
     _authValueLabel.textColor = VNAccent();
 
+    // Support
     _supportCard.backgroundColor = VNCard();
     _supportCard.layer.borderColor = VNLine().CGColor;
     _supportTitleLabel.textColor = VNText();
     _supportSubtitleLabel.textColor = VNMuted();
-    _joinButton.backgroundColor = VNBlue();
-    [_joinButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    _joinButton.backgroundColor = VNAccent();
+    [_joinButton setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
 
+    // Extra
     _extraCard.backgroundColor = VNCard();
     _extraCard.layer.borderColor = VNLine().CGColor;
     _autoCleanLabel.textColor = VNText();
@@ -335,17 +346,23 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _authorizationLabel.textColor = VNText();
     [_authorizationButton setTitleColor:VNAccent() forState:UIControlStateNormal];
 
+    // Log
     _logCard.backgroundColor = VNCard();
     _logCard.layer.borderColor = VNLine().CGColor;
+    _logTextView.backgroundColor = [UIColor colorWithWhite:0.05 alpha:1.0];
+    _logTextView.layer.borderColor = VNLine().CGColor;
+    _logTextView.textColor = VNAccent();
 
+    // Top buttons
     _settingsBtn.backgroundColor = VNPanel2();
     _settingsBtn.layer.borderColor = VNLine().CGColor;
     _settingsBtn.tintColor = VNText();
     _trashBtn.backgroundColor = VNPanel2();
     _trashBtn.layer.borderColor = VNLine().CGColor;
     _trashBtn.tintColor = VNText();
-    _closeBtn.backgroundColor = VNRed();
-    _closeBtn.layer.borderColor = VNRed().CGColor;
+    _closeBtn.backgroundColor = VNPanel2();
+    _closeBtn.layer.borderColor = VNLine().CGColor;
+    [_closeBtn setTitleColor:VNText() forState:UIControlStateNormal];
 
     [self updateVersionSelectionUI];
     [self updateAuthorizationPresentation];
@@ -378,11 +395,13 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
 
 - (UIButton *)makeCloseButton {
     UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
-    b.backgroundColor = VNRed();
+    b.backgroundColor = VNPanel2();
     b.layer.cornerRadius = 10.0f;
+    b.layer.borderWidth = 1.0f;
+    b.layer.borderColor = VNLine().CGColor;
     b.titleLabel.font = [UIFont systemFontOfSize:18 weight:UIFontWeightBold];
     [b setTitle:@"✕" forState:UIControlStateNormal];
-    [b setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    [b setTitleColor:VNText() forState:UIControlStateNormal];
     return b;
 }
 
@@ -463,7 +482,7 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
 
     _titleLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     _titleLabel.text = @"VN TOOL";
-    _titleLabel.font = VNFont(30, UIFontWeightBold);
+    _titleLabel.font = VNFont(28, UIFontWeightBold);
     _titleLabel.textColor = VNText();
     [_contentView addSubview:_titleLabel];
 
@@ -493,12 +512,24 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
 
     _startButton = [UIButton buttonWithType:UIButtonTypeSystem];
     _startButton.backgroundColor = VNAccent();
-    _startButton.layer.cornerRadius = 16.0f;
-    _startButton.titleLabel.font = VNFont(14, UIFontWeightBold);
-    [_startButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    _startButton.layer.cornerRadius = 12.0f;
+    _startButton.titleLabel.font = VNFont(13, UIFontWeightBold);
+    [_startButton setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
     [_startButton setTitle:@"Bắt đầu" forState:UIControlStateNormal];
     [_startButton addTarget:self action:@selector(startButtonTapped:) forControlEvents:UIControlEventTouchUpInside];
     [_controlCard addSubview:_startButton];
+
+    // Nút Tắt toàn bộ HUD
+    _killAllButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    _killAllButton.backgroundColor = VNPanel2();
+    _killAllButton.layer.cornerRadius = 12.0f;
+    _killAllButton.layer.borderWidth = 1.0f;
+    _killAllButton.layer.borderColor = VNRed().CGColor;
+    _killAllButton.titleLabel.font = VNFont(12, UIFontWeightBold);
+    [_killAllButton setTitleColor:VNRed() forState:UIControlStateNormal];
+    [_killAllButton setTitle:@"Tắt hết" forState:UIControlStateNormal];
+    [_killAllButton addTarget:self action:@selector(killAllTapped:) forControlEvents:UIControlEventTouchUpInside];
+    [_controlCard addSubview:_killAllButton];
 
     // Toggles card
     _togglesCard = [self makeCard];
@@ -729,12 +760,12 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _logTextView.editable = NO;
     _logTextView.scrollEnabled = YES;
     _logTextView.showsHorizontalScrollIndicator = NO;
-    _logTextView.backgroundColor = [UIColor colorWithRed:0.02 green:0.04 blue:0.03 alpha:1.0];
+    _logTextView.backgroundColor = [UIColor colorWithWhite:0.05 alpha:1.0];
     _logTextView.layer.cornerRadius = 10.0f;
     _logTextView.layer.borderWidth = 1.0f;
     _logTextView.layer.borderColor = VNLine().CGColor;
     _logTextView.font = [UIFont monospacedSystemFontOfSize:10 weight:UIFontWeightRegular];
-    _logTextView.textColor = [UIColor colorWithRed:0.55 green:0.95 blue:0.6 alpha:1.0];
+    _logTextView.textColor = VNAccent();
     _logTextView.text = @"[VN TOOL] ready.\nPress Bắt đầu to boot kernel.";
     [_logCard addSubview:_logTextView];
 
@@ -776,10 +807,10 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _statusLabel.text = @"Trạng thái · Game chưa chạy";
     [_statusCard addSubview:_statusLabel];
     _openGameButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    _openGameButton.backgroundColor = VNOrange();
-    _openGameButton.layer.cornerRadius = 14.0f;
+    _openGameButton.backgroundColor = VNAccent();
+    _openGameButton.layer.cornerRadius = 12.0f;
     _openGameButton.titleLabel.font = VNFont(13, UIFontWeightBold);
-    [_openGameButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    [_openGameButton setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
     [_openGameButton setTitle:@"Vào Game" forState:UIControlStateNormal];
     [_openGameButton addTarget:self action:@selector(openGameTapped:) forControlEvents:UIControlEventTouchUpInside];
     [_statusCard addSubview:_openGameButton];
@@ -827,10 +858,10 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _supportSubtitleLabel.textColor = VNMuted();
     [_supportCard addSubview:_supportSubtitleLabel];
     _joinButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    _joinButton.backgroundColor = VNBlue();
-    _joinButton.layer.cornerRadius = 14.0f;
+    _joinButton.backgroundColor = VNAccent();
+    _joinButton.layer.cornerRadius = 12.0f;
     _joinButton.titleLabel.font = VNFont(13, UIFontWeightBold);
-    [_joinButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    [_joinButton setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
     [_joinButton setTitle:@"Join" forState:UIControlStateNormal];
     [_joinButton addTarget:self action:@selector(joinSupportTapped:) forControlEvents:UIControlEventTouchUpInside];
     [_supportCard addSubview:_joinButton];
@@ -886,19 +917,20 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     y = CGRectGetMaxY(_titleLabel.frame) + 14;
 
     // Control card
-    CGFloat controlH = 86.0f;
+    CGFloat controlH = 92.0f;
     _controlCard.frame = CGRectMake(xPad, y, cardW, controlH);
     CGFloat iconSize = MIN(kMenuButtonSize, MIN(cardW * 0.42f, controlH * 0.85f));
     iconSize = MAX(48.0f, iconSize);
     _controlIconView.frame = CGRectMake(14, (controlH - iconSize) * 0.5f, iconSize, iconSize);
-    _startButton.frame = CGRectMake(cardW - 108, 26, 94, 34);
+    _startButton.frame = CGRectMake(cardW - 108, 18, 94, 32);
+    _killAllButton.frame = CGRectMake(cardW - 108, 54, 94, 28);
     CGFloat textX = 80;
     CGFloat textW = cardW - 108 - textX - 8;
     _controlTitleLabel.frame = CGRectMake(textX, 20, textW, 22);
     _controlSubtitleLabel.frame = CGRectMake(textX, 44, textW, 28);
     y = CGRectGetMaxY(_controlCard.frame) + 12;
 
-    // Toggles card
+    // Toggles
     CGFloat togglesH = 216.0f;
     _togglesCard.frame = CGRectMake(xPad, y, cardW, togglesH);
     _aimbotLabel.frame = CGRectMake(16, 14, 200, 24);
@@ -913,7 +945,7 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _camValueLabel.frame = CGRectMake(cardW - 64, 170, 48, 24);
     y = CGRectGetMaxY(_togglesCard.frame) + 12;
 
-    // ESP ELEMENTS card
+    // ESP ELEMENTS
     CGFloat espH = 20 + 12 + 5 * 40 + 70;
     _espCard.frame = CGRectMake(xPad, y, cardW, espH);
     _espCardTitle.frame = CGRectMake(16, 12, cardW - 32, 16);
@@ -935,7 +967,7 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _espDistanceLimitSlider.frame = CGRectMake(16, rowY + 32, cardW - 32, 30);
     y = CGRectGetMaxY(_espCard.frame) + 12;
 
-    // Aimbot card
+    // Aimbot
     CGFloat aimH = 254.0f;
     _aimCard.frame = CGRectMake(xPad, y, cardW, aimH);
     _fovLabel.frame = CGRectMake(16, 14, 120, 20);
@@ -949,7 +981,7 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _aimBehindWallSwitch.frame = CGRectMake(cardW - 68, 210, 51, 31);
     y = CGRectGetMaxY(_aimCard.frame) + 12;
 
-    // Log card
+    // Log
     CGFloat logH = 210.0f;
     _logCard.frame = CGRectMake(xPad, y, cardW, logH);
     _logTextView.frame = CGRectMake(10, 8, cardW - 20, logH - 16);
@@ -1033,9 +1065,7 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _ffCard.backgroundColor = !isMax ? VNPanel2() : VNCard();
 
     UIImage *icon = [self imageNamedWebPOrPNG:isMax ? @"ffmax" : @"ff"];
-    if (icon) {
-        _controlIconView.image = icon;
-    }
+    if (icon) _controlIconView.image = icon;
 }
 
 #pragma mark - App lifecycle
@@ -1099,7 +1129,7 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     ESPPrefsSetFloatLive(@"Fov", v);
 }
 
-// ---------------- ESP element toggles ----------------
+#pragma mark - ESP element toggles
 - (void)espBoxChanged:(UISwitch *)sender {
     ESPPrefsSetBoolLive(@"Box", sender.on);
     ESPSyncFromPrefs();
@@ -1132,11 +1162,6 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     ESPSyncFromPrefs();
 }
 
-// Trigger / AimPos: write both the plain and the _Lite-suffixed keys.
-// ESPPrefs appends "_Lite" to any key that is not in IsGlobalKey, so a
-// value written while the menu layout was set to Lite landed under
-// TriggerMode_Lite while esp.mm reads TriggerMode. Writing both closes
-// that gap regardless of which layout is active.
 - (void)triggerSegmentChanged:(UISegmentedControl *)sender {
     float v = (float)sender.selectedSegmentIndex;
     NSUserDefaults *std = [NSUserDefaults standardUserDefaults];
@@ -1163,6 +1188,8 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     ESPPrefsSetBoolLive(@"AimBehindWall", sender.on);
     ESPSyncFromPrefs();
 }
+
+#pragma mark - Start / Kill All
 
 - (void)startButtonTapped:(UIButton *)sender {
     (void)sender;
@@ -1208,6 +1235,50 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
         }];
     });
 }
+
+// Nút Tắt hết: tắt HUD, tắt mọi switch ESP/Aimbot, reset UI
+- (void)killAllTapped:(id)sender {
+    (void)sender;
+
+    ++_hudRequestSerial;
+    _pendingHUDEnableUntil = 0;
+
+    // 1. Tắt HUD + kernel view
+    SetHUDEnabled(NO);
+
+    // 2. Tắt toàn bộ toggle trong prefs
+    ESPPrefsSetBoolLive(@"Aimbot", NO);
+    ESPPrefsSetBoolLive(@"AimSilent", NO);
+    ESPPrefsSetBoolLive(@"EnableESP", NO);
+    ESPPrefsSetBoolLive(@"CamPC", NO);
+    ESPPrefsSetBoolLive(@"Box", NO);
+    ESPPrefsSetBoolLive(@"Line", NO);
+    ESPPrefsSetBoolLive(@"Bone", NO);
+    ESPPrefsSetBoolLive(@"Health", NO);
+    ESPPrefsSetBoolLive(@"Count", NO);
+    ESPPrefsSetBoolLive(@"AimBehindWall", NO);
+
+    ESPSyncFromPrefs();
+
+    // 3. Cập nhật switch UI
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [self.aimbotSwitch setOn:NO animated:YES];
+        [self.silentAimSwitch setOn:NO animated:YES];
+        [self.espSwitch setOn:NO animated:YES];
+        [self.camSwitch setOn:NO animated:YES];
+        [self.espBoxSwitch setOn:NO animated:YES];
+        [self.espLineSwitch setOn:NO animated:YES];
+        [self.espBoneSwitch setOn:NO animated:YES];
+        [self.espHealthSwitch setOn:NO animated:YES];
+        [self.espCountSwitch setOn:NO animated:YES];
+        [self.aimBehindWallSwitch setOn:NO animated:YES];
+
+        [self appendBootLog:@"[VN] Tắt toàn bộ HUD + ESP + Aimbot"];
+        [self refreshHUDState];
+    });
+}
+
+#pragma mark - Open game / support
 
 - (void)openGameTapped:(id)sender {
     (void)sender;
@@ -1291,6 +1362,7 @@ static void HomeVCBootLogSink(NSString *line) {
         _startButton.alpha = 1.0;
         _controlSubtitleLabel.alpha = 1.0;
         _pendingHUDEnableUntil = 0;
+        _startButton.backgroundColor = VNAccent();
         return;
     }
 
@@ -1302,13 +1374,14 @@ static void HomeVCBootLogSink(NSString *line) {
     BOOL isWithinEnableGracePeriod = _pendingHUDEnableUntil > 0 && now < _pendingHUDEnableUntil;
     if (!hudIsEnabled && isWithinEnableGracePeriod) {
         [_startButton setTitle:@"Đang bật…" forState:UIControlStateNormal];
+        _startButton.backgroundColor = VNAccentDim();
         return;
     }
 
     if (hudIsEnabled) {
         _pendingHUDEnableUntil = 0;
         [_startButton setTitle:@"Tắt HUD" forState:UIControlStateNormal];
-        _startButton.backgroundColor = [UIColor colorWithWhite:0.35 alpha:1.0];
+        _startButton.backgroundColor = VNPanel2();
     } else {
         [_startButton setTitle:@"Bắt đầu" forState:UIControlStateNormal];
         _startButton.backgroundColor = VNAccent();
