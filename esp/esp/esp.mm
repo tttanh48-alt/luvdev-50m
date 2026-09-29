@@ -3711,6 +3711,17 @@ static inline uint64_t ESPPhaseNowUS(void) {
         Vector3 liveHip  = getPositionExt(getHip(PawnObject));
         const bool hasLiveBone = looksLikeWorldPos(liveHead) || looksLikeWorldPos(liveHip);
 
+        // Fallback HP if DataPool reads fail/delay but 3D bones exist
+        if (hasLiveBone) {
+            if (CurHP <= 0 && MaxHP <= 0) {
+                CurHP = 200;
+                MaxHP = 200;
+            } else if (MaxHP <= 0) {
+                MaxHP = 200;
+                if (CurHP <= 0) CurHP = 200;
+            }
+        }
+
         // Alive/knocked always have MaxHP > 0.
         const bool hpUnreadable = (CurHP == 0 && MaxHP == 0);
         const bool hpGarbage = (MaxHP < 0 || MaxHP > 2000 || CurHP > 2000 ||
