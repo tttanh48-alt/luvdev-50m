@@ -9,13 +9,6 @@
 #import "AppSettingsViewController.h"
 #import "../KernelBoot.h"
 
-// NOTE: MDTheme.h is deliberately NOT imported. The previous build still
-// called MDThemeLoadFromPrefs() in viewDidLoad, and that function rewrote
-// the window appearance with values from prefs. When the user's stored
-// theme was light, it overrode every local colour set by applyTheme, which
-// is why the screen stayed white no matter what palette this file used.
-// Everything below uses a local palette and never touches prefs.
-
 static HomeViewController *g_activeLogVC = nil;
 static void HomeVCBootLogSink(NSString *line);
 
@@ -24,17 +17,17 @@ static void HomeVCBootLogSink(NSString *line);
 
 static const CGFloat kMenuButtonSize = 56.0f;
 
-#pragma mark - VN TOOL dark navy theme (GitHub-style)
-static UIColor *VNBg(void)     { return [UIColor colorWithRed:0.043 green:0.059 blue:0.078 alpha:1.0]; } // #0B0F14
-static UIColor *VNCard(void)   { return [UIColor colorWithRed:0.086 green:0.106 blue:0.133 alpha:1.0]; } // #161B22
-static UIColor *VNLine(void)   { return [UIColor colorWithRed:0.188 green:0.212 blue:0.239 alpha:1.0]; } // #30363D
-static UIColor *VNText(void)   { return [UIColor colorWithRed:0.902 green:0.929 blue:0.953 alpha:1.0]; } // #E6EDF3
-static UIColor *VNMuted(void)  { return [UIColor colorWithRed:0.545 green:0.580 blue:0.620 alpha:1.0]; } // #8B949E
-static UIColor *VNAccent(void) { return [UIColor colorWithRed:0.247 green:0.725 blue:0.314 alpha:1.0]; } // #3FB950
-static UIColor *VNBlue(void)   { return [UIColor colorWithRed:0.345 green:0.651 blue:1.000 alpha:1.0]; } // #58A6FF
-static UIColor *VNOrange(void) { return [UIColor colorWithRed:0.941 green:0.533 blue:0.243 alpha:1.0]; } // #F0883E
-static UIColor *VNRed(void)    { return [UIColor colorWithRed:0.973 green:0.318 blue:0.286 alpha:1.0]; } // #F85149
-static UIColor *VNPanel2(void) { return [UIColor colorWithRed:0.129 green:0.149 blue:0.176 alpha:1.0]; } // #21262D
+#pragma mark - VN TOOL dark navy theme
+static UIColor *VNBg(void)     { return [UIColor colorWithRed:0.043 green:0.059 blue:0.078 alpha:1.0]; }
+static UIColor *VNCard(void)   { return [UIColor colorWithRed:0.086 green:0.106 blue:0.133 alpha:1.0]; }
+static UIColor *VNLine(void)   { return [UIColor colorWithRed:0.188 green:0.212 blue:0.239 alpha:1.0]; }
+static UIColor *VNText(void)   { return [UIColor colorWithRed:0.902 green:0.929 blue:0.953 alpha:1.0]; }
+static UIColor *VNMuted(void)  { return [UIColor colorWithRed:0.545 green:0.580 blue:0.620 alpha:1.0]; }
+static UIColor *VNAccent(void) { return [UIColor colorWithRed:0.247 green:0.725 blue:0.314 alpha:1.0]; }
+static UIColor *VNBlue(void)   { return [UIColor colorWithRed:0.345 green:0.651 blue:1.000 alpha:1.0]; }
+static UIColor *VNOrange(void) { return [UIColor colorWithRed:0.941 green:0.533 blue:0.243 alpha:1.0]; }
+static UIColor *VNRed(void)    { return [UIColor colorWithRed:0.973 green:0.318 blue:0.286 alpha:1.0]; }
+static UIColor *VNPanel2(void) { return [UIColor colorWithRed:0.129 green:0.149 blue:0.176 alpha:1.0]; }
 
 static UIView *VNMakeCard(void) {
     UIView *v = [[UIView alloc] init];
@@ -52,7 +45,6 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
 @interface HomeViewController ()
 @property (nonatomic, strong) UIScrollView *scrollView;
 @property (nonatomic, strong) UIView *contentView;
-
 @property (nonatomic, strong) UIButton *closeBtn;
 @property (nonatomic, strong) UILabel *titleLabel;
 
@@ -65,12 +57,30 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
 @property (nonatomic, strong) UIView *togglesCard;
 @property (nonatomic, strong) UILabel *aimbotLabel;
 @property (nonatomic, strong) UISwitch *aimbotSwitch;
+@property (nonatomic, strong) UILabel *silentAimLabel;
+@property (nonatomic, strong) UISwitch *silentAimSwitch;
 @property (nonatomic, strong) UILabel *espLabel;
 @property (nonatomic, strong) UISwitch *espSwitch;
 @property (nonatomic, strong) UILabel *camLabel;
 @property (nonatomic, strong) UISwitch *camSwitch;
 @property (nonatomic, strong) UISlider *camSlider;
 @property (nonatomic, strong) UILabel *camValueLabel;
+
+@property (nonatomic, strong) UIView *espCard;
+@property (nonatomic, strong) UILabel *espCardTitle;
+@property (nonatomic, strong) UILabel *espBoxLabel;
+@property (nonatomic, strong) UISwitch *espBoxSwitch;
+@property (nonatomic, strong) UILabel *espLineLabel;
+@property (nonatomic, strong) UISwitch *espLineSwitch;
+@property (nonatomic, strong) UILabel *espBoneLabel;
+@property (nonatomic, strong) UISwitch *espBoneSwitch;
+@property (nonatomic, strong) UILabel *espHealthLabel;
+@property (nonatomic, strong) UISwitch *espHealthSwitch;
+@property (nonatomic, strong) UILabel *espCountLabel;
+@property (nonatomic, strong) UISwitch *espCountSwitch;
+@property (nonatomic, strong) UILabel *espDistanceLimitLabel;
+@property (nonatomic, strong) UISlider *espDistanceLimitSlider;
+@property (nonatomic, strong) UILabel *espDistanceLimitValueLabel;
 
 @property (nonatomic, strong) UIView *aimCard;
 @property (nonatomic, strong) UILabel *fovLabel;
@@ -128,17 +138,10 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
 
 @implementation HomeViewController
 
-#pragma mark - Lifecycle
-
-- (UIStatusBarStyle)preferredStatusBarStyle {
-    return UIStatusBarStyleLightContent;
-}
+- (UIStatusBarStyle)preferredStatusBarStyle { return UIStatusBarStyleLightContent; }
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-
-    // Intentionally no MDThemeLoadFromPrefs() here. It used to rewrite the
-    // window appearance from prefs and undo every colour set below.
     [self buildUI];
     _gameMissingStreak = 0;
     _pendingHUDEnableUntil = 0;
@@ -154,15 +157,12 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
                                              selector:@selector(appBecameActive)
                                                  name:UIApplicationDidBecomeActiveNotification
                                                object:nil];
-
     [self startPollingGameState];
 }
 
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
-    // Re-assert the dark theme every time we come back from the game.
     [self applyTheme];
-    // Dark the surrounding chrome if we are inside a nav/tab controller.
     if (self.navigationController) {
         self.navigationController.navigationBar.barStyle = UIBarStyleBlack;
         self.navigationController.navigationBar.translucent = NO;
@@ -190,8 +190,6 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     [_pollTimer invalidate];
 }
 
-#pragma mark - Helpers
-
 - (UIColor *)cardBackground { return VNCard(); }
 - (UIColor *)accentGreen { return VNAccent(); }
 - (UIColor *)accentBlue { return VNBlue(); }
@@ -211,18 +209,18 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     [self presentViewController:nav animated:YES completion:nil];
 }
 
-// Close button. The most reliable way to hide the config screen while
-// keeping the process alive is to bring Free Fire to the foreground —
-// iOS backgrounds this app automatically, KeepAlive audio prevents
-// suspension, and the offscreen ESP_View timer keeps mirroring to
-// SpringBoard. If the game is not installed / scheme does not resolve,
-// fall back to the private suspend selector, and if that is not present
-// either, exit(0) so at least the app disappears.
+// Close button. NEVER call suspend or exit here — the kernel exploit is
+// holding a live task port and a corrupted socket primitive, and tearing
+// down the process while that state is active makes SpringBoard panic and
+// the device reboots. The only safe way to hide the config UI is to hand
+// control back to iOS by launching another app. iOS backgrounds us, the
+// offscreen ESP_View timer keeps mirroring to SpringBoard, and the kernel
+// state stays untouched.
 - (void)closeAppTapped:(id)sender {
     (void)sender;
+
     UIApplication *app = [UIApplication sharedApplication];
 
-    // 1) Bring Free Fire to front (best path: game gets focus, we background).
     NSString *bundleId = GameTargetIsMax() ? @"com.dts.freefiremax" : @"vn.vng.freefireth";
     NSURL *url = [NSURL URLWithString:[NSString stringWithFormat:@"%@://", bundleId]];
     if ([app canOpenURL:url]) {
@@ -240,23 +238,19 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
         }
     }
 
-    // 2) Private suspend selector (backgrounds the app directly).
-    SEL sel = NSSelectorFromString(@"suspend");
-    if ([app respondsToSelector:sel]) {
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
-        [app performSelector:sel];
-#pragma clang diagnostic pop
-        return;
-    }
-
-    // 3) Last resort — terminate. The user can relaunch.
-    exit(0);
+    UIAlertController *alert =
+        [UIAlertController alertControllerWithTitle:@"Ẩn menu"
+                                            message:@"Vuốt lên từ đáy màn hình để ẩn app. "
+                                                    @"ĐỪNG tắt app — sẽ mất ESP và có thể gây lỗi máy."
+                                     preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Đã hiểu"
+                                              style:UIAlertActionStyleDefault
+                                            handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
 }
 
 - (void)applyTheme {
     self.view.backgroundColor = VNBg();
-
     _titleLabel.textColor = VNText();
     _titleLabel.font = VNFont(30, UIFontWeightBold);
 
@@ -271,12 +265,28 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _togglesCard.layer.borderColor = VNLine().CGColor;
     _aimbotLabel.textColor = VNText();
     _aimbotSwitch.onTintColor = VNAccent();
+    _silentAimLabel.textColor = VNText();
+    _silentAimSwitch.onTintColor = VNAccent();
     _espLabel.textColor = VNText();
     _espSwitch.onTintColor = VNAccent();
     _camLabel.textColor = VNText();
     _camSwitch.onTintColor = VNAccent();
     _camSlider.minimumTrackTintColor = VNAccent();
     _camValueLabel.textColor = VNMuted();
+
+    _espCard.backgroundColor = VNCard();
+    _espCard.layer.borderColor = VNLine().CGColor;
+    _espCardTitle.textColor = VNMuted();
+    for (UILabel *l in @[_espBoxLabel, _espLineLabel, _espBoneLabel,
+                          _espHealthLabel, _espCountLabel, _espDistanceLimitLabel]) {
+        l.textColor = VNText();
+    }
+    for (UISwitch *s in @[_espBoxSwitch, _espLineSwitch, _espBoneSwitch,
+                           _espHealthSwitch, _espCountSwitch]) {
+        s.onTintColor = VNAccent();
+    }
+    _espDistanceLimitSlider.minimumTrackTintColor = VNAccent();
+    _espDistanceLimitValueLabel.textColor = VNMuted();
 
     _aimCard.backgroundColor = VNCard();
     _aimCard.layer.borderColor = VNLine().CGColor;
@@ -346,20 +356,13 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     UIImage *img = [UIImage imageNamed:baseName];
     if (img) return img;
     NSString *path = [[NSBundle mainBundle] pathForResource:baseName ofType:@"webp"];
-    if (path.length) {
-        img = [UIImage imageWithContentsOfFile:path];
-        if (img) return img;
-    }
+    if (path.length) { img = [UIImage imageWithContentsOfFile:path]; if (img) return img; }
     path = [[NSBundle mainBundle] pathForResource:baseName ofType:@"png"];
-    if (path.length) {
-        img = [UIImage imageWithContentsOfFile:path];
-    }
+    if (path.length) img = [UIImage imageWithContentsOfFile:path];
     return img;
 }
 
-- (UIView *)makeCard {
-    return VNMakeCard();
-}
+- (UIView *)makeCard { return VNMakeCard(); }
 
 - (UIButton *)makeIconButton:(NSString *)systemName {
     UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
@@ -373,9 +376,6 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     return b;
 }
 
-// Standalone close button: text "✕" on a red background so it is clearly
-// visible against the dark cards and cannot be confused with the settings
-// or trash icon buttons.
 - (UIButton *)makeCloseButton {
     UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
     b.backgroundColor = VNRed();
@@ -415,18 +415,8 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     return card;
 }
 
-#pragma mark - Authorization
-
-- (void)beginAuthorization {
-    [self updateAuthorizationPresentation];
-    [self refreshHUDState];
-}
-
-- (void)retryAuthorization:(id)sender {
-    (void)sender;
-    [self beginAuthorization];
-}
-
+- (void)beginAuthorization { [self updateAuthorizationPresentation]; [self refreshHUDState]; }
+- (void)retryAuthorization:(id)sender { (void)sender; [self beginAuthorization]; }
 - (void)revokeAuthorization {
     SetHUDEnabled(NO);
     [self updateAuthorizationPresentation];
@@ -447,8 +437,6 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _startButton.alpha = 1.0;
 }
 
-#pragma mark - UI
-
 - (void)buildUI {
     self.view.backgroundColor = VNBg();
 
@@ -462,9 +450,6 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _contentView.backgroundColor = VNBg();
     [_scrollView addSubview:_contentView];
 
-    // Close button on the far left. Text-based (✕) rather than SF Symbol
-    // so it cannot silently render as an empty button on iOS versions
-    // where "xmark" is missing.
     _closeBtn = [self makeCloseButton];
     [_closeBtn addTarget:self action:@selector(closeAppTapped:) forControlEvents:UIControlEventTouchUpInside];
     [self.view addSubview:_closeBtn];
@@ -485,7 +470,6 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     // Control card
     _controlCard = [self makeCard];
     [_contentView addSubview:_controlCard];
-
     _controlIconView = [[UIImageView alloc] initWithFrame:CGRectZero];
     _controlIconView.contentMode = UIViewContentModeScaleAspectFill;
     _controlIconView.clipsToBounds = YES;
@@ -525,19 +509,28 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _aimbotLabel.font = VNFont(15, UIFontWeightSemibold);
     _aimbotLabel.textColor = VNText();
     [_togglesCard addSubview:_aimbotLabel];
-
     _aimbotSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
     _aimbotSwitch.onTintColor = VNAccent();
     _aimbotSwitch.on = ESPPrefsBool(@"Aimbot", NO);
     [_aimbotSwitch addTarget:self action:@selector(aimbotSwitchChanged:) forControlEvents:UIControlEventValueChanged];
     [_togglesCard addSubview:_aimbotSwitch];
 
+    _silentAimLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+    _silentAimLabel.text = @"Silent Aim";
+    _silentAimLabel.font = VNFont(15, UIFontWeightSemibold);
+    _silentAimLabel.textColor = VNText();
+    [_togglesCard addSubview:_silentAimLabel];
+    _silentAimSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
+    _silentAimSwitch.onTintColor = VNAccent();
+    _silentAimSwitch.on = ESPPrefsBool(@"AimSilent", NO);
+    [_silentAimSwitch addTarget:self action:@selector(silentAimSwitchChanged:) forControlEvents:UIControlEventValueChanged];
+    [_togglesCard addSubview:_silentAimSwitch];
+
     _espLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-    _espLabel.text = @"ESP";
+    _espLabel.text = @"ESP Master";
     _espLabel.font = VNFont(15, UIFontWeightSemibold);
     _espLabel.textColor = VNText();
     [_togglesCard addSubview:_espLabel];
-
     _espSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
     _espSwitch.onTintColor = VNAccent();
     _espSwitch.on = ESPPrefsBool(@"EnableESP", YES);
@@ -549,7 +542,6 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _camLabel.font = VNFont(15, UIFontWeightSemibold);
     _camLabel.textColor = VNText();
     [_togglesCard addSubview:_camLabel];
-
     _camSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
     _camSwitch.onTintColor = VNAccent();
     _camSwitch.on = ESPPrefsBool(@"CamPC", NO);
@@ -563,17 +555,100 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _camSlider.minimumTrackTintColor = VNAccent();
     [_camSlider addTarget:self action:@selector(camSliderChanged:) forControlEvents:UIControlEventValueChanged];
     [_togglesCard addSubview:_camSlider];
-
     _camValueLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     _camValueLabel.font = [UIFont monospacedSystemFontOfSize:12 weight:UIFontWeightSemibold];
     _camValueLabel.textColor = VNMuted();
+    _camValueLabel.textAlignment = NSTextAlignmentRight;
     _camValueLabel.text = [NSString stringWithFormat:@"%.0f", _camSlider.value];
     [_togglesCard addSubview:_camValueLabel];
+
+    // ESP ELEMENTS card
+    _espCard = [self makeCard];
+    [_contentView addSubview:_espCard];
+    _espCardTitle = [[UILabel alloc] initWithFrame:CGRectZero];
+    _espCardTitle.text = @"ESP ELEMENTS";
+    _espCardTitle.font = VNFont(11, UIFontWeightSemibold);
+    _espCardTitle.textColor = VNMuted();
+    [_espCard addSubview:_espCardTitle];
+
+    _espBoxLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+    _espBoxLabel.text = @"Box";
+    _espBoxLabel.font = VNFont(14, UIFontWeightMedium);
+    _espBoxLabel.textColor = VNText();
+    [_espCard addSubview:_espBoxLabel];
+    _espBoxSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
+    _espBoxSwitch.onTintColor = VNAccent();
+    _espBoxSwitch.on = ESPPrefsBool(@"Box", YES);
+    [_espBoxSwitch addTarget:self action:@selector(espBoxChanged:) forControlEvents:UIControlEventValueChanged];
+    [_espCard addSubview:_espBoxSwitch];
+
+    _espLineLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+    _espLineLabel.text = @"Snapline";
+    _espLineLabel.font = VNFont(14, UIFontWeightMedium);
+    _espLineLabel.textColor = VNText();
+    [_espCard addSubview:_espLineLabel];
+    _espLineSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
+    _espLineSwitch.onTintColor = VNAccent();
+    _espLineSwitch.on = ESPPrefsBool(@"Line", YES);
+    [_espLineSwitch addTarget:self action:@selector(espLineChanged:) forControlEvents:UIControlEventValueChanged];
+    [_espCard addSubview:_espLineSwitch];
+
+    _espBoneLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+    _espBoneLabel.text = @"Bone / Skeleton";
+    _espBoneLabel.font = VNFont(14, UIFontWeightMedium);
+    _espBoneLabel.textColor = VNText();
+    [_espCard addSubview:_espBoneLabel];
+    _espBoneSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
+    _espBoneSwitch.onTintColor = VNAccent();
+    _espBoneSwitch.on = ESPPrefsBool(@"Bone", YES);
+    [_espBoneSwitch addTarget:self action:@selector(espBoneChanged:) forControlEvents:UIControlEventValueChanged];
+    [_espCard addSubview:_espBoneSwitch];
+
+    _espHealthLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+    _espHealthLabel.text = @"Health Bar";
+    _espHealthLabel.font = VNFont(14, UIFontWeightMedium);
+    _espHealthLabel.textColor = VNText();
+    [_espCard addSubview:_espHealthLabel];
+    _espHealthSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
+    _espHealthSwitch.onTintColor = VNAccent();
+    _espHealthSwitch.on = ESPPrefsBool(@"Health", YES);
+    [_espHealthSwitch addTarget:self action:@selector(espHealthChanged:) forControlEvents:UIControlEventValueChanged];
+    [_espCard addSubview:_espHealthSwitch];
+
+    _espCountLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+    _espCountLabel.text = @"Player Count";
+    _espCountLabel.font = VNFont(14, UIFontWeightMedium);
+    _espCountLabel.textColor = VNText();
+    [_espCard addSubview:_espCountLabel];
+    _espCountSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
+    _espCountSwitch.onTintColor = VNAccent();
+    _espCountSwitch.on = ESPPrefsBool(@"Count", YES);
+    [_espCountSwitch addTarget:self action:@selector(espCountChanged:) forControlEvents:UIControlEventValueChanged];
+    [_espCard addSubview:_espCountSwitch];
+
+    _espDistanceLimitLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+    _espDistanceLimitLabel.text = @"Max Distance (m)";
+    _espDistanceLimitLabel.font = VNFont(14, UIFontWeightSemibold);
+    _espDistanceLimitLabel.textColor = VNText();
+    [_espCard addSubview:_espDistanceLimitLabel];
+    _espDistanceLimitValueLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+    _espDistanceLimitValueLabel.font = [UIFont monospacedSystemFontOfSize:12 weight:UIFontWeightSemibold];
+    _espDistanceLimitValueLabel.textColor = VNMuted();
+    _espDistanceLimitValueLabel.textAlignment = NSTextAlignmentRight;
+    _espDistanceLimitValueLabel.text = [NSString stringWithFormat:@"%.0f", ESPPrefsFloat(@"EspDistanceLimit", 150.0f)];
+    [_espCard addSubview:_espDistanceLimitValueLabel];
+    _espDistanceLimitSlider = [[UISlider alloc] initWithFrame:CGRectZero];
+    _espDistanceLimitSlider.minimumValue = 20.0f;
+    _espDistanceLimitSlider.maximumValue = 300.0f;
+    _espDistanceLimitSlider.value = ESPPrefsFloat(@"EspDistanceLimit", 150.0f);
+    _espDistanceLimitSlider.minimumTrackTintColor = VNAccent();
+    [_espDistanceLimitSlider addTarget:self action:@selector(espDistanceLimitChanged:) forControlEvents:UIControlEventValueChanged];
+    [_espDistanceLimitSlider addTarget:self action:@selector(espDistanceLimitCommitted:) forControlEvents:UIControlEventTouchUpInside | UIControlEventTouchUpOutside];
+    [_espCard addSubview:_espDistanceLimitSlider];
 
     // Aimbot card
     _aimCard = [self makeCard];
     [_contentView addSubview:_aimCard];
-
     _fovLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     _fovLabel.text = @"FOV size";
     _fovLabel.font = VNFont(14, UIFontWeightSemibold);
@@ -650,7 +725,6 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     // Log card
     _logCard = [self makeCard];
     [_contentView addSubview:_logCard];
-
     _logTextView = [[UITextView alloc] initWithFrame:CGRectZero];
     _logTextView.editable = NO;
     _logTextView.scrollEnabled = YES;
@@ -671,22 +745,18 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _versionSectionLabel.textColor = VNMuted();
     [_contentView addSubview:_versionSectionLabel];
 
-    UIImageView *ffMaxIcon = nil;
-    UILabel *ffMaxName = nil;
+    UIImageView *ffMaxIcon = nil; UILabel *ffMaxName = nil;
     _ffMaxCard = [self makeVersionCardCapturingIcon:&ffMaxIcon nameLabel:&ffMaxName];
-    _ffMaxIconView = ffMaxIcon;
-    _ffMaxNameLabel = ffMaxName;
+    _ffMaxIconView = ffMaxIcon; _ffMaxNameLabel = ffMaxName;
     _ffMaxIconView.image = [self imageNamedWebPOrPNG:@"ffmax"] ?: [UIImage imageNamed:@"logo"];
     _ffMaxNameLabel.text = @"Free Fire MAX";
     _ffMaxCard.tag = 2;
     [_ffMaxCard addTarget:self action:@selector(versionCardTapped:) forControlEvents:UIControlEventTouchUpInside];
     [_contentView addSubview:_ffMaxCard];
 
-    UIImageView *ffIcon = nil;
-    UILabel *ffName = nil;
+    UIImageView *ffIcon = nil; UILabel *ffName = nil;
     _ffCard = [self makeVersionCardCapturingIcon:&ffIcon nameLabel:&ffName];
-    _ffIconView = ffIcon;
-    _ffNameLabel = ffName;
+    _ffIconView = ffIcon; _ffNameLabel = ffName;
     _ffIconView.image = [self imageNamedWebPOrPNG:@"ff"] ?: [UIImage imageNamed:@"logo"];
     _ffNameLabel.text = @"Free Fire";
     _ffCard.tag = 1;
@@ -696,18 +766,15 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     // Status card
     _statusCard = [self makeCard];
     [_contentView addSubview:_statusCard];
-
     _statusDot = [[UIView alloc] initWithFrame:CGRectZero];
     _statusDot.layer.cornerRadius = 5.0f;
     _statusDot.backgroundColor = [UIColor colorWithWhite:0.6 alpha:1.0];
     [_statusCard addSubview:_statusDot];
-
     _statusLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     _statusLabel.font = VNFont(14, UIFontWeightMedium);
     _statusLabel.textColor = VNText();
     _statusLabel.text = @"Trạng thái · Game chưa chạy";
     [_statusCard addSubview:_statusLabel];
-
     _openGameButton = [UIButton buttonWithType:UIButtonTypeSystem];
     _openGameButton.backgroundColor = VNOrange();
     _openGameButton.layer.cornerRadius = 14.0f;
@@ -771,25 +838,20 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     // Extra
     _extraCard = [self makeCard];
     [_contentView addSubview:_extraCard];
-
     _autoCleanLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     _autoCleanLabel.text = @"VarClean before HUD";
     _autoCleanLabel.font = VNFont(14, UIFontWeightMedium);
     _autoCleanLabel.textColor = VNText();
     [_extraCard addSubview:_autoCleanLabel];
-
     _autoCleanSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
     _autoCleanSwitch.onTintColor = VNAccent();
     _autoCleanSwitch.on = ESPPrefsBool(@"AutoVarCleanBeforeHUD", NO);
     [_autoCleanSwitch addTarget:self action:@selector(autoCleanSwitchChanged:) forControlEvents:UIControlEventValueChanged];
     [_extraCard addSubview:_autoCleanSwitch];
-
     _authorizationLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     _authorizationLabel.font = VNFont(12, UIFontWeightMedium);
     _authorizationLabel.textColor = VNText();
-    _authorizationLabel.textAlignment = NSTextAlignmentLeft;
     [_extraCard addSubview:_authorizationLabel];
-
     _authorizationButton = [UIButton buttonWithType:UIButtonTypeSystem];
     _authorizationButton.titleLabel.font = VNFont(12, UIFontWeightSemibold);
     [_authorizationButton setTitleColor:VNAccent() forState:UIControlStateNormal];
@@ -801,14 +863,12 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
 
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
-
     UIEdgeInsets insets = self.view.safeAreaInsets;
     CGFloat width = self.view.bounds.size.width;
     CGFloat height = self.view.bounds.size.height;
     _scrollView.frame = self.view.bounds;
 
     CGFloat gear = 36.0f;
-    // Row 1: [X close] ... [trash] [gear]
     _closeBtn.frame = CGRectMake(insets.left + 16, insets.top + 8, gear, gear);
     _settingsBtn.frame = CGRectMake(width - insets.right - 16 - gear, insets.top + 8, gear, gear);
     _trashBtn.frame = CGRectMake(CGRectGetMinX(_settingsBtn.frame) - 10 - gear, insets.top + 8, gear, gear);
@@ -818,7 +878,6 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     CGFloat cardW = contentW - xPad * 2.0f;
     CGFloat y = insets.top + 52.0f;
 
-    // Title sits between the close button and the two icon buttons.
     CGFloat titleX = CGRectGetMaxX(_closeBtn.frame) + 12;
     CGFloat titleRight = CGRectGetMinX(_trashBtn.frame) - 12;
     CGFloat titleW = titleRight - titleX;
@@ -826,6 +885,7 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _titleLabel.frame = CGRectMake(titleX, y, titleW, 40);
     y = CGRectGetMaxY(_titleLabel.frame) + 14;
 
+    // Control card
     CGFloat controlH = 86.0f;
     _controlCard.frame = CGRectMake(xPad, y, cardW, controlH);
     CGFloat iconSize = MIN(kMenuButtonSize, MIN(cardW * 0.42f, controlH * 0.85f));
@@ -838,18 +898,44 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _controlSubtitleLabel.frame = CGRectMake(textX, 44, textW, 28);
     y = CGRectGetMaxY(_controlCard.frame) + 12;
 
-    CGFloat togglesH = 176.0f;
+    // Toggles card
+    CGFloat togglesH = 216.0f;
     _togglesCard.frame = CGRectMake(xPad, y, cardW, togglesH);
     _aimbotLabel.frame = CGRectMake(16, 14, 200, 24);
     _aimbotSwitch.frame = CGRectMake(cardW - 68, 10, 51, 31);
-    _espLabel.frame = CGRectMake(16, 54, 200, 24);
-    _espSwitch.frame = CGRectMake(cardW - 68, 50, 51, 31);
-    _camLabel.frame = CGRectMake(16, 94, 200, 24);
-    _camSwitch.frame = CGRectMake(cardW - 68, 90, 51, 31);
-    _camSlider.frame = CGRectMake(16, 128, cardW - 90, 30);
-    _camValueLabel.frame = CGRectMake(cardW - 64, 130, 48, 24);
+    _silentAimLabel.frame = CGRectMake(16, 54, 200, 24);
+    _silentAimSwitch.frame = CGRectMake(cardW - 68, 50, 51, 31);
+    _espLabel.frame = CGRectMake(16, 94, 200, 24);
+    _espSwitch.frame = CGRectMake(cardW - 68, 90, 51, 31);
+    _camLabel.frame = CGRectMake(16, 134, 200, 24);
+    _camSwitch.frame = CGRectMake(cardW - 68, 130, 51, 31);
+    _camSlider.frame = CGRectMake(16, 168, cardW - 90, 30);
+    _camValueLabel.frame = CGRectMake(cardW - 64, 170, 48, 24);
     y = CGRectGetMaxY(_togglesCard.frame) + 12;
 
+    // ESP ELEMENTS card
+    CGFloat espH = 20 + 12 + 5 * 40 + 70;
+    _espCard.frame = CGRectMake(xPad, y, cardW, espH);
+    _espCardTitle.frame = CGRectMake(16, 12, cardW - 32, 16);
+
+    CGFloat rowY = 32;
+    NSArray *rowSwitches = @[_espBoxSwitch, _espLineSwitch, _espBoneSwitch,
+                              _espHealthSwitch, _espCountSwitch];
+    NSArray *rowLabels = @[_espBoxLabel, _espLineLabel, _espBoneLabel,
+                            _espHealthLabel, _espCountLabel];
+    for (NSUInteger i = 0; i < rowSwitches.count; i++) {
+        UILabel *l = rowLabels[i];
+        UISwitch *s = rowSwitches[i];
+        l.frame = CGRectMake(16, rowY + 4, cardW - 100, 24);
+        s.frame = CGRectMake(cardW - 68, rowY, 51, 31);
+        rowY += 40;
+    }
+    _espDistanceLimitLabel.frame = CGRectMake(16, rowY + 4, cardW - 100, 24);
+    _espDistanceLimitValueLabel.frame = CGRectMake(cardW - 64, rowY + 4, 48, 24);
+    _espDistanceLimitSlider.frame = CGRectMake(16, rowY + 32, cardW - 32, 30);
+    y = CGRectGetMaxY(_espCard.frame) + 12;
+
+    // Aimbot card
     CGFloat aimH = 254.0f;
     _aimCard.frame = CGRectMake(xPad, y, cardW, aimH);
     _fovLabel.frame = CGRectMake(16, 14, 120, 20);
@@ -863,6 +949,7 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _aimBehindWallSwitch.frame = CGRectMake(cardW - 68, 210, 51, 31);
     y = CGRectGetMaxY(_aimCard.frame) + 12;
 
+    // Log card
     CGFloat logH = 210.0f;
     _logCard.frame = CGRectMake(xPad, y, cardW, logH);
     _logTextView.frame = CGRectMake(10, 8, cardW - 20, logH - 16);
@@ -876,7 +963,6 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     CGFloat versionH = 128.0f;
     _ffMaxCard.frame = CGRectMake(xPad, y, versionW, versionH);
     _ffCard.frame = CGRectMake(xPad + versionW + gap, y, versionW, versionH);
-
     CGFloat iconSide = 64.0f;
     _ffMaxIconView.frame = CGRectMake((versionW - iconSide) * 0.5f, 18, iconSide, iconSide);
     _ffIconView.frame = CGRectMake((versionW - iconSide) * 0.5f, 18, iconSide, iconSide);
@@ -884,6 +970,7 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _ffNameLabel.frame = CGRectMake(8, 90, versionW - 16, 24);
     y = CGRectGetMaxY(_ffMaxCard.frame) + 14;
 
+    // Status
     CGFloat statusH = 64.0f;
     _statusCard.frame = CGRectMake(xPad, y, cardW, statusH);
     _statusDot.frame = CGRectMake(16, 27, 10, 10);
@@ -891,6 +978,7 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _statusLabel.frame = CGRectMake(36, 18, cardW - 112 - 44, 28);
     y = CGRectGetMaxY(_statusCard.frame) + 12;
 
+    // License / auth
     CGFloat halfW = (cardW - gap) * 0.5f;
     CGFloat halfH = 92.0f;
     _licenseCard.frame = CGRectMake(xPad, y, halfW, halfH);
@@ -901,6 +989,7 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _authValueLabel.frame = CGRectMake(14, 40, halfW - 28, 36);
     y = CGRectGetMaxY(_licenseCard.frame) + 12;
 
+    // Support
     CGFloat supportH = 72.0f;
     _supportCard.frame = CGRectMake(xPad, y, cardW, supportH);
     _joinButton.frame = CGRectMake(cardW - 92, 19, 78, 34);
@@ -908,6 +997,7 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _supportSubtitleLabel.frame = CGRectMake(16, 40, cardW - 120, 18);
     y = CGRectGetMaxY(_supportCard.frame) + 12;
 
+    // Extra
     CGFloat extraH = 96.0f;
     _extraCard.frame = CGRectMake(xPad, y, cardW, extraH);
     _autoCleanLabel.frame = CGRectMake(16, 16, cardW - 90, 22);
@@ -981,6 +1071,12 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     ESPSyncFromPrefs();
 }
 
+- (void)silentAimSwitchChanged:(UISwitch *)sender {
+    ESPPrefsSetBoolLive(@"AimSilent", sender.on);
+    ESPSyncFromPrefs();
+    NSLog(@"[VN] AimSilent set to %d", (int)sender.on);
+}
+
 - (void)espSwitchChanged:(UISwitch *)sender {
     ESPPrefsSetBoolLive(@"EnableESP", sender.on);
     ESPSyncFromPrefs();
@@ -1003,12 +1099,44 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     ESPPrefsSetFloatLive(@"Fov", v);
 }
 
-// Trigger / AimPos write both key variants. ESPPrefs appends "_Lite" when
-// the menu layout is Lite; if the layout is Pro it writes the plain key.
-// The read path in esp.mm goes through the same ResolveKey, so a mismatch
-// only happens when the layout changes between a write and a read, or when
-// the value was written before a layout change. Writing both keys and
-// syncing NSUserDefaults directly closes that gap.
+// ---------------- ESP element toggles ----------------
+- (void)espBoxChanged:(UISwitch *)sender {
+    ESPPrefsSetBoolLive(@"Box", sender.on);
+    ESPSyncFromPrefs();
+}
+- (void)espLineChanged:(UISwitch *)sender {
+    ESPPrefsSetBoolLive(@"Line", sender.on);
+    ESPSyncFromPrefs();
+}
+- (void)espBoneChanged:(UISwitch *)sender {
+    ESPPrefsSetBoolLive(@"Bone", sender.on);
+    ESPSyncFromPrefs();
+}
+- (void)espHealthChanged:(UISwitch *)sender {
+    ESPPrefsSetBoolLive(@"Health", sender.on);
+    ESPSyncFromPrefs();
+}
+- (void)espCountChanged:(UISwitch *)sender {
+    ESPPrefsSetBoolLive(@"Count", sender.on);
+    ESPSyncFromPrefs();
+}
+
+- (void)espDistanceLimitChanged:(UISlider *)sender {
+    float v = sender.value;
+    _espDistanceLimitValueLabel.text = [NSString stringWithFormat:@"%.0f", v];
+    ESPPrefsSetFloatLive(@"EspDistanceLimit", v);
+}
+
+- (void)espDistanceLimitCommitted:(UISlider *)sender {
+    ESPPrefsSetFloat(@"EspDistanceLimit", sender.value);
+    ESPSyncFromPrefs();
+}
+
+// Trigger / AimPos: write both the plain and the _Lite-suffixed keys.
+// ESPPrefs appends "_Lite" to any key that is not in IsGlobalKey, so a
+// value written while the menu layout was set to Lite landed under
+// TriggerMode_Lite while esp.mm reads TriggerMode. Writing both closes
+// that gap regardless of which layout is active.
 - (void)triggerSegmentChanged:(UISegmentedControl *)sender {
     float v = (float)sender.selectedSegmentIndex;
     NSUserDefaults *std = [NSUserDefaults standardUserDefaults];
@@ -1017,7 +1145,7 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     [std synchronize];
     ESPPrefsSetFloat(@"TriggerMode", v);
     ESPSyncFromPrefs();
-    NSLog(@"[VN] TriggerMode set to %.0f (both keys)", v);
+    NSLog(@"[VN] TriggerMode set to %.0f", v);
 }
 
 - (void)aimPosSegmentChanged:(UISegmentedControl *)sender {
@@ -1028,7 +1156,7 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     [std synchronize];
     ESPPrefsSetFloat(@"AimPos", v);
     ESPSyncFromPrefs();
-    NSLog(@"[VN] AimPos set to %.0f (both keys)", v);
+    NSLog(@"[VN] AimPos set to %.0f", v);
 }
 
 - (void)aimBehindWallSwitchChanged:(UISwitch *)sender {
