@@ -5349,13 +5349,13 @@ void EnableCamPC(uint64_t localPlayerPawn, bool isEnabled, float campcValue) {
         s_lastFollowCameraObj = 0;
         return;
     }
-    uint64_t FollowCameraObj = ReadAddr<uint64_t>(localPlayerPawn + 0x628);
+    uint64_t FollowCameraObj = ReadAddr<uint64_t>(localPlayerPawn + 0x690);
     if (isVaildPtr(FollowCameraObj)) {
         if (isEnabled && campcValue > 0.0f) {
-            WriteAddr<float>(FollowCameraObj + 0x70, campcValue);
+            WriteAddr<float>(FollowCameraObj + 0x84, campcValue);
             s_lastFollowCameraObj = FollowCameraObj;
         } else if (s_lastFollowCameraObj) {
-            WriteAddr<float>(FollowCameraObj + 0x70, 0.0f);
+            WriteAddr<float>(FollowCameraObj + 0x84, 0.0f);
             s_lastFollowCameraObj = 0;
         }
     } else {
