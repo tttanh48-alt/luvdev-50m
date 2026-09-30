@@ -267,8 +267,8 @@ bool isLocalTeamMate(uint64_t localPlayer, uint64_t Player) {
         }
     }
 
-    // (5) Cả hai phải có TeamID hợp lệ — nếu 1 bên 0 thì KHÔNG kết luận teammate.
-    if (myTeamID <= 0 || TeamID <= 0) return false;
+    // (5) Nếu không đọc được TeamID hợp lệ → coi là teammate để tránh vẽ ESP lên đồng đội
+    if (myTeamID <= 0 || TeamID <= 0) return true;
     return myTeamID == TeamID;
 }
 
