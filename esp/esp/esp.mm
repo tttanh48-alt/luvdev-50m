@@ -50,7 +50,7 @@ extern "C" {
         mach_msg_type_number_t dataCnt
     );
     kern_return_t mach_vm_allocate(
-        mach_task_t task,
+         vm_map_t task, 
         mach_vm_address_t *address,
         mach_vm_size_t size,
         int flags
