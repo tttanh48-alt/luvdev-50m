@@ -149,7 +149,6 @@ static inline GameWeaponRaycast SampleLocalWeaponRaycast(uint64_t localPawn, con
         if (!looksLikeWorldPos(hit)) continue;
         if (!looksLikeWorldPos(origin)) origin = fallbackOrigin;
         if (!looksLikeWorldPos(origin)) continue;
-        // Reject near-zero garbage.
         if (fabsf(hit.x) < 0.05f && fabsf(hit.y) < 0.05f && fabsf(hit.z) < 0.05f) continue;
         out.valid = true;
         out.origin = origin;
@@ -164,9 +163,7 @@ static inline bool RaycastHitNearTarget(const GameWeaponRaycast &rc, const Vecto
     const float hitToEnemy = Vector3::Distance(rc.hit, targetPos);
     const float distEnemy = Vector3::Distance(rc.origin, targetPos);
     const float distHit = Vector3::Distance(rc.origin, rc.hit);
-    // Solid hit clearly in front of the body → cover, not body.
     if (distEnemy > 0.60f && distHit + 0.70f < distEnemy) return false;
-    // Body capsule (slightly looser than last pass so open targets still count).
     if (hitToEnemy <= 1.45f) return true;
     if (distHit + 0.20f >= distEnemy && hitToEnemy <= 1.85f) return true;
     if (distEnemy < 0.45f && hitToEnemy <= 1.50f) return true;
@@ -182,7 +179,6 @@ static inline bool AimAssistObjectHasEnemy(uint64_t aa, uint64_t enemy) {
         uint64_t tgt = ReadAddr<uint64_t>(cand + 0x18);
         if (tgt == enemy) return true;
     }
-    // List<KLNCOMCJJGK> @ +0x20
     uint64_t list = ReadAddr<uint64_t>(aa + 0x20);
     if (isVaildPtr(list)) {
         int n = ReadAddr<int>(list + 0x18);
@@ -216,7 +212,6 @@ static inline bool LastWeaponTargetIsEnemy(uint64_t localPawn, uint64_t enemy) {
     return isVaildPtr(t) && t == enemy;
 }
 
-// Frame-local raycast sample (filled once per render from local pawn).
 static GameWeaponRaycast g_frameWeaponRaycast;
 static uint64_t g_frameWeaponRaycastLocal = 0;
 
@@ -400,7 +395,6 @@ static inline uint64_t ReadVehicleIAmIn(uint64_t pawn) {
     uint64_t primary = kVehicleIAmIn ? kVehicleIAmIn : 0x8A8;
     uint64_t v = ReadAddr<uint64_t>(pawn + primary);
     if (isVaildPtr(v) && v != pawn) return v;
-    // One version alt only (FF vs Max mid-field shift).
     uint64_t alt = (primary == 0x8A8) ? 0x8B0 : 0x8A8;
     if (alt != primary) {
         v = ReadAddr<uint64_t>(pawn + alt);
@@ -692,7 +686,6 @@ static inline Vector3 ResolveSilentAimWorldPos(uint64_t pawn, int posMode) {
     }
     Vector3 bone = GetAimTargetPosMode(pawn, posMode, 0.0f);
     if (!IsZeroVec(bone) && looksLikeWorldPos(bone)) return bone;
-    // Fallbacks still respect mode: neck slightly below head, body toward hip.
     Vector3 head = ResolveSilentHeadWorldPos(pawn);
     if (IsZeroVec(head) || !looksLikeWorldPos(head)) return Vector3{0, 0, 0};
     Vector3 hip = getPositionExt(getHip(pawn));
@@ -721,7 +714,6 @@ static inline void ZeroWeaponScatterForAim(uint64_t localPawn) {
     WriteAddr<float>(rep + 0x1E0, 0.0f); // ScatterSpeed
     WriteAddr<float>(rep + 0x1E4, 0.0f); // ScatterRecoverSpeed
     WriteAddr<float>(rep + 0x1EC, 0.0f); // ScatterMove
-    // Extra common scatter slots seen on some weapon reps (safe zero if unused).
     WriteAddr<float>(rep + 0x190, 0.0f);
     WriteAddr<float>(rep + 0x19C, 0.0f);
     WriteAddr<float>(rep + 0x1E8, 0.0f);
@@ -729,18 +721,21 @@ static inline void ZeroWeaponScatterForAim(uint64_t localPawn) {
 
 static Vector3 g_silentLastLiveOrigin{0, 0, 0};
 
-static inline bool SilentWriteAimingDir(uint64_t aimingInfo, const Vector3 &targetPos, const Vector3 & /*fromFallback*/) {
+// ============================================================
+//  SilentWriteAimingDir — FIX VIÊN TRÚNG VIÊN KHÔNG
+//  Origin: live muzzle → last → camera fallback.
+//  Re-read origin after write: nếu game cập nhật → ghi lại dir.
+// ============================================================
+static inline bool SilentWriteAimingDir(uint64_t aimingInfo,
+                                        const Vector3 &targetPos,
+                                        const Vector3 &fromFallback) {
     if (!isVaildPtr(aimingInfo) || IsZeroVec(targetPos)) return false;
 
     Vector3 startPos = ReadAddr<Vector3>(aimingInfo + kSilentOriginOff);
-    if (!IsZeroVec(startPos)) {
-        g_silentLastLiveOrigin = startPos; // learn real muzzle
-    } else if (!IsZeroVec(g_silentLastLiveOrigin)) {
-        // Between shots origin can clear for 1 tick — reuse last live muzzle.
-        startPos = g_silentLastLiveOrigin;
-    } else {
-        return false; // no real muzzle yet
-    }
+    if (IsZeroVec(startPos)) startPos = g_silentLastLiveOrigin;
+    if (IsZeroVec(startPos)) startPos = fromFallback;
+    if (IsZeroVec(startPos) || !looksLikeWorldPos(startPos)) return false;
+    g_silentLastLiveOrigin = startPos;
 
     Vector3 dir;
     dir.x = targetPos.x - startPos.x;
@@ -751,6 +746,7 @@ static inline bool SilentWriteAimingDir(uint64_t aimingInfo, const Vector3 &targ
     dir.x /= mag; dir.y /= mag; dir.z /= mag;
 
     WriteAddr<Vector3>(aimingInfo + kSilentDirOff, dir);
+
     Vector3 start2 = ReadAddr<Vector3>(aimingInfo + kSilentOriginOff);
     if (!IsZeroVec(start2)) {
         g_silentLastLiveOrigin = start2;
@@ -770,7 +766,6 @@ static inline bool SilentWriteAimingDir(uint64_t aimingInfo, const Vector3 &targ
     return true;
 }
 
-// Force primary sAim1 only. Returns writes count.
 static inline int SilentForcePrimary(uint64_t localPawn, const Vector3 &fromLoc, const Vector3 &targetPos) {
     if (!isVaildPtr(localPawn) || IsZeroVec(targetPos)) return 0;
     int wrote = 0;
@@ -790,7 +785,7 @@ static inline int SilentForcePrimary(uint64_t localPawn, const Vector3 &fromLoc,
     for (int i = 0; i < n; i++) {
         uint64_t aimingInfo = ReadAddr<uint64_t>(localPawn + offs[i]);
         if (!isVaildPtr(aimingInfo)) continue;
-        g_silentCachedInfo = aimingInfo; // cache even if origin not ready yet
+        g_silentCachedInfo = aimingInfo;
         if (SilentWriteAimingDir(aimingInfo, targetPos, fromLoc)) {
             g_lastAimingInfo = aimingInfo;
             wrote++;
@@ -803,6 +798,9 @@ static inline void AimSyncFireHit(uint64_t localPawn, const Vector3 &fromLoc, co
     (void)SilentForcePrimary(localPawn, fromLoc, targetPos);
 }
 
+// ============================================================
+//  SilentAimThread — FIX: refresh origin từ camera mỗi vòng.
+// ============================================================
 static void SilentAimThread(uint64_t localPlayer) {
     while (g_silentKeepRunning.load(std::memory_order_relaxed)) {
         bool hasTarget = false;
@@ -836,9 +834,12 @@ static void SilentAimThread(uint64_t localPlayer) {
                     g_silentTargetPos = live;
                 }
             }
+            // Refresh origin từ camera mỗi vòng.
+            Vector3 fromNow = AimCameraOrigin(lp, fromLoc);
+            if (!looksLikeWorldPos(fromNow)) fromNow = fromLoc;
             if (!IsZeroVec(targetPos)) {
-                for (int i = 0; i < 10; i++) {
-                    SilentForcePrimary(lp, fromLoc, targetPos);
+                for (int i = 0; i < 12; i++) {
+                    SilentForcePrimary(lp, fromNow, targetPos);
                 }
             }
         } else {
@@ -955,7 +956,6 @@ static void AimLockSetQuat(uint64_t localPlayer, const Quaternion &q) {
 }
 
 static void AimLockSet(uint64_t localPlayer, uint64_t /*enemy*/, int /*posMode*/, float /*dist*/, const Vector3 & /*fromLoc*/) {
-    // Without a fresh quat, just keep previous stamp if any.
     if (!isVaildPtr(localPlayer)) return;
     std::lock_guard<std::mutex> lk(g_aimLockMtx);
     g_aimLockActive = g_aimLockHaveQuat;
@@ -966,7 +966,6 @@ static void AimLockClear(void) {
     std::lock_guard<std::mutex> lk(g_aimLockMtx);
     g_aimLockActive = false;
     g_aimLockHaveQuat = false;
-    // keep thread alive idle (cheap yields) — restart cost is higher than idle yield
 }
 
 static void AimLockStop(void) {
@@ -1044,7 +1043,7 @@ struct AimMotionTrack {
     uint64_t pawn = 0;
     Vector3 lastHip = {0, 0, 0};
     Vector3 lastHead = {0, 0, 0};
-    Vector3 vel = {0, 0, 0};      // smoothed world velocity m/s (mostly XZ)
+    Vector3 vel = {0, 0, 0};
     Vector3 smoothHead = {0, 0, 0};
     CFTimeInterval lastT = 0;
     bool valid = false;
@@ -1127,7 +1126,7 @@ static Vector3 AimTrackAndLeadEx(uint64_t pawn, Vector3 bodyPos, float distanceM
     float instSpeed = sqrtf(instF.x * instF.x + instF.z * instF.z);
     float alpha = bulletLead
         ? (0.55f + fminf(instSpeed, 12.f) * 0.035f)   
-        : (0.38f + fminf(instSpeed, 10.f) * 0.025f);  // 0.38..0.63 camera
+        : (0.38f + fminf(instSpeed, 10.f) * 0.025f);
     if (alpha > (bulletLead ? 0.95f : 0.68f)) alpha = bulletLead ? 0.95f : 0.68f;
     tr->vel.x = tr->vel.x * (1.f - alpha) + instF.x * alpha;
     tr->vel.z = tr->vel.z * (1.f - alpha) + instF.z * alpha;
@@ -1175,9 +1174,8 @@ static Vector3 AimTrackAndLeadEx(uint64_t pawn, Vector3 bodyPos, float distanceM
 }
 
 static Vector3 AimTrackAndLead(uint64_t pawn, Vector3 bodyPos, float distanceMeters, bool lockYToBody) {
-    // Default = camera path (mild lead).
     return AimTrackAndLeadEx(pawn, bodyPos, distanceMeters, lockYToBody, /*bulletLead=*/false);
-}\
+}
 Vector3 GetAimTargetPosMode(uint64_t pawn, int posMode, float distance) {
     (void)distance;
     if (!isVaildPtr(pawn)) return Vector3{0,0,0};
@@ -1285,9 +1283,9 @@ static inline Vector3 AimLookAtHeadLive(uint64_t localPawn, uint64_t targetPawn,
         cur = Quaternion::Normalized(cur);
         float ang = Quaternion::Angle(cur, targetQ);
 
-        const float kDeadzoneRad = 0.0035f; // ~0.2°
+        const float kDeadzoneRad = 0.0035f;
         if (ang < kDeadzoneRad) {
-            outQ = cur; // hold steady, do not copy noise
+            outQ = cur;
         } else {
             float dt = esp_aim_delta_time();
             float rate = 90.0f;
@@ -1349,7 +1347,6 @@ float moveSpeedScale = 1.0f;
 bool isShowFovCircle = YES;  
 bool isEspCheckVisible = NO;
 bool isAimIgnoreBot = NO; bool isAimIgnoreKnock = NO;
-// isAimBehindWall defined near wall helpers (default NO).
 bool isAimRage = NO; bool isFastReload = NO;
 bool isAimLegit = NO;
 float fastReloadSpeed = 1.0f;
@@ -1370,7 +1367,6 @@ bool isStreamerMode = NO;
 float espDistanceLimit = 150.0f;
 float boxThick = 1.0f;
 float boxR = 0.0f, boxG = 1.0f, boxB = 1.0f;
-// 0 = Color Picker (custom RGB), 1 = Rainbow cycle
 int boxColorMode = 0;
 float boneThick = 1.2f;
 float boneR = 0.0f, boneG = 1.0f, boneB = 1.0f;
@@ -1384,7 +1380,6 @@ int fovColorMode = 0;
 float aimAssistThick = 1.5f;
 float aimAssistR = 0.0f, aimAssistG = 1.0f, aimAssistB = 1.0f;
 
-// Rainbow HSV → RGB. phaseOffset staggers Box/Line/FOV so they don't all match.
 static inline void ESPRainbowRGB(float phaseOffset, float *outR, float *outG, float *outB) {
     float h = fmodf((float)CACurrentMediaTime() * 0.45f + phaseOffset, 1.0f);
     if (h < 0.0f) h += 1.0f;
@@ -1427,8 +1422,8 @@ struct PlayerCache {
     bool isFPP = false;
     bool isCamVis = false;
     bool isPvsVis = false;
-    bool isTrueVis = false; // camera + occlusion (no wall aim)
-    int visGoodFrames = 0;  // consecutive true LOS frames (wall-off hysteresis)
+    bool isTrueVis = false;
+    int visGoodFrames = 0;
     int frame = 0;
 };
 
@@ -1441,7 +1436,7 @@ struct PosTrack {
     Vector3 hipSmoothed{};
     Vector3 lastHeadRaw{};
     Vector3 lastHipRaw{};
-    Vector3 headVel{}; // m/s XZ (Y unused)
+    Vector3 headVel{};
     Vector3 hipVel{};
     CFTimeInterval lastHeadT = 0;
     CFTimeInterval lastHipT = 0;
@@ -1453,13 +1448,10 @@ struct PosTrack {
     bool hasHead = false;
     bool hasHip = false;
     bool isBot = false;
-    // Death hold tied to exact pawn (avoids %96 collisions with s_deadPawn buckets)
     int deadUntilFrame = 0;
-    // Canonical body length (world) learned from good live head<->hip pairs; stabilizes box height
     float bodyLen = 0.f;
     int bodyLenHold = 0;
     bool wasMounted = false;
-    // Track last source used for display smoothing to detect flips (head/hip/root/mount)
     int lastHeadSrcDisp = 0;
     int lastHipSrcDisp = 0;
 };
@@ -1471,14 +1463,9 @@ static inline int PosTrackSlot(uint64_t pawn) {
 }
 
 static inline int PlayerCacheSlot(uint64_t pawn) {
-    // Stable per-pawn slot so cache state (visGoodFrames, isTrueVis, etc.) survives
-    // dict walk order changes and pawns temporarily leaving the processed set.
     return PosTrackSlot(pawn);
 }
 
-// Per-frame ESP/aim snapshot: collect world data first, sample camera matrix LAST,
-// then project. Fixes external-overlay "box sticks to cam then snaps" (matrix went
-// stale while walking the player dict + reading bones).
 struct EspPawnSnap {
     uint64_t pawn = 0;
     Vector3 head{};
@@ -1513,7 +1500,6 @@ static inline Vector3 TrackAndExtrapolate(Vector3 raw, Vector3 &lastRaw, Vector3
     float dt = (float)(now - lastT);
     if (dt < 0.0005f) dt = 0.0005f;
     if (dt > 0.18f) {
-        // Hitch / teleport — snap, no fake velocity.
         lastRaw = raw;
         vel = Vector3{0, 0, 0};
         lastT = now;
@@ -1525,7 +1511,6 @@ static inline Vector3 TrackAndExtrapolate(Vector3 raw, Vector3 &lastRaw, Vector3
         (raw.z - lastRaw.z) / dt
     };
     float instSp = sqrtf(inst.x * inst.x + inst.z * inst.z);
-    // Fast EMA so hard pull updates velocity in 1–2 frames.
     float a = 0.62f + fminf(instSp, 12.f) * 0.025f;
     if (a > 0.92f) a = 0.92f;
     vel.x = vel.x * (1.f - a) + inst.x * a;
@@ -1537,11 +1522,8 @@ static inline Vector3 TrackAndExtrapolate(Vector3 raw, Vector3 &lastRaw, Vector3
         float inv = 15.f / sp;
         vel.x *= inv; vel.z *= inv; sp = 15.f;
     }
-    // World-space EMA — stickier follow so box/line ride the body (not lag then snap).
-    // Fast targets track almost raw; idle still damps bone micro-noise.
     float posA = 0.62f + fminf(sp, 10.f) * 0.032f;
     if (posA > 0.94f) posA = 0.94f;
-    // Large jump = teleport / source switch — snap, don't lerp across the map.
     float jump = Vector3::Distance(raw, lastRaw);
     if (jump > 1.10f) posA = 1.0f;
     Vector3 smoothed = {
@@ -1553,7 +1535,6 @@ static inline Vector3 TrackAndExtrapolate(Vector3 raw, Vector3 &lastRaw, Vector3
     lastT = now;
     has = true;
 
-    // Tiny lead only on hard sprint — keeps stick without overshoot wobble.
     float lead = 0.f;
     if (sp > 2.4f && leadSec > 0.f) {
         lead = leadSec * fminf(sp / 10.f, 1.0f);
@@ -1592,15 +1573,12 @@ static inline void SmoothBoxScreen(uint64_t pawn, float &topY, float &centerX,
         t.has = true;
         return;
     }
-    // Relative change thresholds — size stays locked to body, position sticks hard.
     const float dh = fabsf(boxH - t.h) / fmaxf(t.h, 1.f);
     const float dw = fabsf(boxW - t.w) / fmaxf(t.w, 1.f);
     const float dc = fabsf(centerX - t.cx);
     const float dy = fabsf(topY - t.topY);
-    // Size: very sticky (ankle swing used to pump 20–40% every step).
     float aH = (dh > 0.28f) ? 0.85f : ((dh > 0.12f) ? 0.42f : 0.18f);
     float aW = (dw > 0.28f) ? 0.85f : ((dw > 0.12f) ? 0.42f : 0.18f);
-    // Position: stick to person — follow fast, but damp 1px noise.
     float aC = (dc > 28.f) ? 0.95f : ((dc > 10.f) ? 0.72f : 0.55f);
     float aY = (dy > 28.f) ? 0.95f : ((dy > 10.f) ? 0.72f : 0.55f);
     t.h = t.h * (1.f - aH) + boxH * aH;
@@ -1634,7 +1612,6 @@ static inline Vector3 PickStableHeadRaw(uint64_t pawn, PosTrack &tr) {
     Vector3 root = ReadPlayerRootTransform(pawn);
     Vector3 mount{};
     const bool mounted = IsActivelyMounted(pawn, &mount);
-    // Cache bot bit on track (bots = local sim, bones are truthful).
     if (!tr.hasHead || tr.pawn != pawn) {
         tr.isBot = get_IsBot(pawn);
     }
@@ -1650,8 +1627,6 @@ static inline Vector3 PickStableHeadRaw(uint64_t pawn, PosTrack &tr) {
     int preferred = 0;
     Vector3 raw{};
 
-    // Vehicle/zipline first: skinned head/hip often zero or collapsed while seated.
-    // Prefer live mount/root so ESP keeps drawing passengers.
     if (mounted && looksLikeWorldPos(mount)) {
         bool bonesDead = !looksLikeWorldPos(head) && !looksLikeWorldPos(hip);
         bool collapsed = false;
@@ -1661,24 +1636,20 @@ static inline Vector3 PickStableHeadRaw(uint64_t pawn, PosTrack &tr) {
         }
         if (bonesDead || collapsed || !looksLikeWorldPos(root)) {
             preferred = 4;
-            raw = mount; // already seat-height biased in IsActivelyMounted
+            raw = mount;
         }
     }
 
-    // --- Real players: root is network authority; skinned head lags hard strafe ---
     if (preferred == 0 && remoteHuman && looksLikeWorldPos(root)) {
         float headLagXZ = 0.f;
         if (looksLikeWorldPos(head)) {
             float dx = head.x - root.x, dz = head.z - root.z;
             headLagXZ = sqrtf(dx * dx + dz * dz);
         }
-        // Soft move: head still near root → use live head (snappy).
-        // Hard pull: head trails root → root XZ + head/root Y (pro-ESP style).
         if (looksLikeWorldPos(head) && headLagXZ < 0.85f && validHeadNear(head, root, mounted ? 5.5f : 4.0f)) {
             preferred = 1;
             raw = head;
         } else if (looksLikeWorldPos(head) && headLagXZ < 2.8f) {
-            // Hybrid: network XZ, bone height (box top still correct).
             preferred = 5;
             raw.x = root.x;
             raw.z = root.z;
@@ -1690,7 +1661,6 @@ static inline Vector3 PickStableHeadRaw(uint64_t pawn, PosTrack &tr) {
             raw.y += mounted ? 1.05f : 0.85f;
         }
     } else if (preferred == 0) {
-        // Bots / no root: prefer skinned head (local simulation, zero net lag).
         if (looksLikeWorldPos(head)) {
             Vector3 anchor = looksLikeWorldPos(hip) ? hip : root;
             float maxD = mounted ? 5.5f : 4.0f;
@@ -1716,7 +1686,6 @@ static inline Vector3 PickStableHeadRaw(uint64_t pawn, PosTrack &tr) {
     }
     if (preferred == 0) return Vector3{0, 0, 0};
 
-    // Sticky source (2 frames) — avoid root↔head flicker on soft moves.
     if (tr.pawn == pawn && tr.headSrc != 0 && tr.headSrcHold > 0) {
         Vector3 keep{};
         bool ok = false;
@@ -1736,7 +1705,6 @@ static inline Vector3 PickStableHeadRaw(uint64_t pawn, PosTrack &tr) {
         } else if (tr.headSrc == 4 && mounted && looksLikeWorldPos(mount)) {
             keep = mount; ok = true;
         }
-        // Force switch to hybrid/root when hard lag detected (head far from root).
         bool forceRoot = false;
         if (remoteHuman && looksLikeWorldPos(root) && looksLikeWorldPos(head)) {
             float dx = head.x - root.x, dz = head.z - root.z;
@@ -1744,7 +1712,6 @@ static inline Vector3 PickStableHeadRaw(uint64_t pawn, PosTrack &tr) {
                 forceRoot = true;
         }
         if (ok && !forceRoot && !(preferred == 5 && tr.headSrc == 1 && remoteHuman)) {
-            // Allow upgrade to hybrid/root when remote hard-moves.
             if (!(remoteHuman && (preferred == 5 || preferred == 3) && tr.headSrc == 1)) {
                 tr.headSrcHold--;
                 raw = keep;
@@ -1777,7 +1744,6 @@ static inline Vector3 PickStableHipRaw(uint64_t pawn, PosTrack &tr) {
 
     int preferred = 0;
     Vector3 raw{};
-    // Vehicle/zipline: bones often dead — seat/mount first.
     if (mounted && looksLikeWorldPos(mount)) {
         bool bonesDead = !looksLikeWorldPos(hip) && !looksLikeWorldPos(head);
         bool collapsed = looksLikeWorldPos(hip) && looksLikeWorldPos(head) &&
@@ -1785,10 +1751,9 @@ static inline Vector3 PickStableHipRaw(uint64_t pawn, PosTrack &tr) {
         if (bonesDead || collapsed || !looksLikeWorldPos(root)) {
             preferred = 4;
             raw = mount;
-            raw.y -= 0.35f; // hip-ish under seat head
+            raw.y -= 0.35f;
         }
     }
-    // Real players: root XZ for hip/feet base under hard strafe.
     if (preferred == 0 && remoteHuman && looksLikeWorldPos(root)) {
         if (looksLikeWorldPos(hip)) {
             float dx = hip.x - root.x, dz = hip.z - root.z;
@@ -1798,7 +1763,6 @@ static inline Vector3 PickStableHipRaw(uint64_t pawn, PosTrack &tr) {
             } else {
                 preferred = 3;
                 raw = root;
-                // Keep hip height if sane.
                 raw.y = (lag < 2.5f) ? hip.y : root.y;
             }
         } else {
@@ -1852,7 +1816,6 @@ static inline Vector3 PickStableHipRaw(uint64_t pawn, PosTrack &tr) {
 static inline Vector3 ResolveHeadWorldPosTracked(uint64_t pawn) {
     if (!isVaildPtr(pawn)) return Vector3{0, 0, 0};
     PosTrack &tr = g_posTrack[PosTrackSlot(pawn)];
-    // Respect exact-pawn death tombstone: never revive a dead shell via tracked path.
     if (tr.pawn == pawn && tr.deadUntilFrame > 0 && g_cacheFrameCounter < tr.deadUntilFrame) {
         return Vector3{0, 0, 0};
     }
@@ -1868,7 +1831,6 @@ static inline Vector3 ResolveHeadWorldPosTracked(uint64_t pawn) {
         tr.headSrcHold = 0;
         return Vector3{0, 0, 0};
     }
-    // Bots: smooth only. Real players: short lead so box rides hard strafe.
     float lead = tr.isBot ? 0.f : 0.055f;
     Vector3 out = TrackAndExtrapolate(raw, tr.lastHeadRaw, tr.headVel, tr.lastHeadT, tr.hasHead, lead);
     tr.headSmoothed = out;
@@ -1879,7 +1841,6 @@ static inline Vector3 ResolveHeadWorldPosTracked(uint64_t pawn) {
 static inline Vector3 ResolveHipWorldPosTracked(uint64_t pawn) {
     if (!isVaildPtr(pawn)) return Vector3{0, 0, 0};
     PosTrack &tr = g_posTrack[PosTrackSlot(pawn)];
-    // Respect exact-pawn death tombstone: never revive a dead shell via tracked path.
     if (tr.pawn == pawn && tr.deadUntilFrame > 0 && g_cacheFrameCounter < tr.deadUntilFrame) {
         return Vector3{0, 0, 0};
     }
@@ -1905,11 +1866,9 @@ static inline Vector3 ResolveHipWorldPosTracked(uint64_t pawn) {
 // Smooth a *validated* live position for ESP draw only.
 // Does NOT invent ghosts: caller must already prove live bones/root/mount exist.
 // Keeps box/line from micro-jittering while still snapping on teleport.
-// Extra guard: if this pawn is tombstoned dead (exact match), refuse to smooth — drop.
 static inline Vector3 EspSmoothDisplayPos(uint64_t pawn, Vector3 raw, bool isHead) {
     if (!looksLikeWorldPos(raw) || !isVaildPtr(pawn)) return raw;
     PosTrack &tr = g_posTrack[PosTrackSlot(pawn)];
-    // Exact-pawn tombstone: if dead hold is active for THIS pawn, do not smooth or emit.
     if (tr.pawn == pawn && tr.deadUntilFrame > 0 && g_cacheFrameCounter < tr.deadUntilFrame) {
         return Vector3{0,0,0};
     }
@@ -1993,8 +1952,6 @@ extern "C" void ToggleSpeedX50(bool enable) {
     });
 }
 
-// Single clean write per call. Double-writes + multi-burst made the camera thrash
-// even when bullets (silent/fire-dir) were already accurate.
 static void write_aim_rotations(uint64_t player, const Quaternion &out) {
     if (!isVaildPtr(player)) return;
     WriteAddr<Quaternion>(player + kAimRotation, out);
@@ -2014,7 +1971,6 @@ void set_aim(uint64_t player, Quaternion rotation, float speed, int mode, bool f
     Quaternion q = Quaternion::Normalized(rotation);
     if (isnan(q.x) || isnan(q.y) || isnan(q.z) || isnan(q.w)) return;
 
-    // Moving targets need hard writes more often — soft blend is what makes aim feel "tạm tạm".
     const bool hardLock = forceInstant || mode >= 1 || speed >= 0.75f;
     if (hardLock) {
         write_aim_rotations(player, q);
@@ -2034,7 +1990,6 @@ void set_aim(uint64_t player, Quaternion rotation, float speed, int mode, bool f
         return;
     }
 
-    // Safe mode only: still snappy enough for strafe.
     float s = Clamp01f(speed);
     float base = 0.55f + 0.45f * s;
     if (angle > 0.08f) base = fmaxf(base, 0.90f);
@@ -2060,7 +2015,6 @@ void update_aim_assist_legit_tuning(bool enable) {
     if (!isVaildPtr(statics)) return;
 
     if (!enable) {
-        // Only restore if we previously applied a boost (avoid writing 0,0 cold).
         if (g_aaLegitBoostActive) {
             WriteAddr<float>(statics + kAaStaticKnolgmjlcef, g_aaSavedKnol);
             WriteAddr<float>(statics + kAaStaticNfkcllpalej, g_aaSavedNfk);
@@ -2117,14 +2071,13 @@ void set_aim_legit(uint64_t player, Quaternion rotation, float targetDistance) {
     Quaternion current = ReadAddr<Quaternion>(player + kAimRotation);
     float n = current.x * current.x + current.y * current.y + current.z * current.z + current.w * current.w;
     if (!(n > 0.0001f) || isnan(n)) {
-        // Cold / invalid current rotation — snap once so legit has a valid baseline.
         write_aim_rotations(player, q);
         return;
     }
     current = Quaternion::Normalized(current);
     float angle = Quaternion::Angle(current, q);
     if (isnan(angle)) return;
-    if (angle < 0.0015f) return; // already on target
+    if (angle < 0.0015f) return;
 
     float s = Clamp01f(aimSpeed);
     float t = legit_aim_blend_t(angle, s, targetDistance, aimDistance);
@@ -2187,8 +2140,6 @@ static inline ESPGeometryBuffers ESPGeometryBuffersCreate(void) {
     return buffers;
 }
 
-// Counts path elements and curve elements for the [APP-LAYER] diagnostic.
-// CGPathApply takes a plain C function, not a block.
 typedef struct { uint32_t n; uint32_t curves; } ESPPathCountCtx;
 static void espCountPathElements(void *info, const CGPathElement *e) {
     ESPPathCountCtx *c = (ESPPathCountCtx *)info;
@@ -2219,8 +2170,6 @@ static bool s_setNameEnabledGlobal = false;
 static NSString *s_customNameGlobal = nil;
 
 void ESPSyncFromPrefs(void) {
-    // Throttle full reload: menu drag/slider used to call this every tick → lag.
-    // Still fast enough for toggles (callers also invoke on switch/segment release).
     static CFTimeInterval s_lastFullSync = 0;
     CFTimeInterval nowSync = CACurrentMediaTime();
     if (s_lastFullSync > 0 && (nowSync - s_lastFullSync) < 0.05) {
@@ -2232,14 +2181,12 @@ void ESPSyncFromPrefs(void) {
     isStreamerMode = ESPPrefsBool(@"StreamerMode", NO);
 
     Norecoil   = ESPPrefsBool(@"Norecoil", NO);
-    // Brutal run scale (slider). Default 0.16 = old crawl; adjustable Lite+Pro.
     {
         float bs = ESPPrefsFloat(@"BrutalSpeed", 0.16f);
         if (bs < 0.05f) bs = 0.05f;
         if (bs > 0.80f) bs = 0.80f;
         speedvalue = Norecoil ? bs : 1.0f;
     }
-    // Menu Speed only when Brutal OFF (same mutual exclusion as before).
     isSpeed = ESPPrefsBool(@"Speed", NO);
     moveSpeedScale = ESPPrefsFloat(@"SpeedValue", 1.22f);
     if (moveSpeedScale < 1.0f) moveSpeedScale = 1.0f;
@@ -2252,7 +2199,6 @@ void ESPSyncFromPrefs(void) {
         isSpeed = NO;
         moveSpeedScale = 1.0f;
     }
-    // FOV ring visibility (only drawn when Aimbot + sphere FOV mode).
     isShowFovCircle = ESPPrefsBool(@"ShowFovCircle", YES);
 
     isESP      = ESPPrefsBool(@"EnableESP", YES);
@@ -2262,7 +2208,6 @@ void ESPSyncFromPrefs(void) {
     isBone     = NO;
     isHealth   = ESPPrefsBool(@"Health", YES);
     isName     = NO;
-    // "Distance" is ESP toggle (bool). Aim range uses dedicated "AimDistance".
     isDis      = ESPPrefsBool(@"Distance", YES);
     isLine     = ESPPrefsBool(@"Line", YES);
     isEspBot   = ESPPrefsBool(@"EspBot", YES);
@@ -2272,31 +2217,23 @@ void ESPSyncFromPrefs(void) {
     isAlertNum = ESPPrefsBool(@"AlertNum", NO);
 
     isEspCheckVisible = ESPPrefsBool(@"EspCheckVisible", NO);
-    // AimOnBot = YES means aimbot/assist/silent can target bots.
-    // Keep legacy AimIgnoreBot in sync (Ignore = !AimOnBot).
     {
         BOOL aimOnBot = YES;
         id aimOnBotPref = AppSettingsObjectForKey(@"AimOnBot");
         if (aimOnBotPref != nil) {
             aimOnBot = ESPPrefsBool(@"AimOnBot", YES);
         } else {
-            // Migrate old builds that only had AimIgnoreBot.
             aimOnBot = !ESPPrefsBool(@"AimIgnoreBot", NO);
             ESPPrefsSetBool(@"AimOnBot", aimOnBot);
         }
         isAimIgnoreBot = !aimOnBot;
         ESPPrefsSetBool(@"AimIgnoreBot", isAimIgnoreBot);
-        // When aiming bots, also show bot ESP so you can verify lock on training bots.
         if (aimOnBot) isEspBot = YES;
     }
     isAimIgnoreKnock = ESPPrefsBool(@"AimIgnoreKnock", NO);
-    // Aim behind wall only (bom keo feature removed).
     isAimBehindWall = ESPPrefsBool(@"AimBehindWall", NO);
-    // Force-clear legacy ice-wall pref so old installs cannot soft-enable it.
     ESPPrefsSetBool(@"AimBehindIceWall", NO);
     isAimRage = ESPPrefsBool(@"AimRage", NO);
-    // Aimbot + Aim Assist can run together (share target priority / AimPos).
-    // Only Legit is exclusive vs hard LookAt (soft Slerp fights Aimbot).
     isAimbot    = ESPPrefsBool(@"Aimbot", NO);
     isAimAssist = ESPPrefsBool(@"AimAssist", NO);
     isAimLegit  = ESPPrefsBool(@"AimLegit", NO);
@@ -2307,8 +2244,6 @@ void ESPSyncFromPrefs(void) {
         ESPPrefsSetBool(@"AimLegit", NO);
         isAimLegit = NO;
     }
-    // Aim sphere: FOV / 180 / 360. Only active with Aimbot.
-    // Migrate legacy Aim360 bool → mode 2.
     {
         int mode = (int)ESPPrefsFloat(@"AimSphereMode", -1.0f);
         if (mode < 0) {
@@ -2319,18 +2254,14 @@ void ESPSyncFromPrefs(void) {
         if (mode > 2) mode = 2;
         aimSphereMode = isAimbot ? mode : 0;
     }
-    // Silent / magic bullet — independent of Aimbot (works alone or together).
-    // Approach from AimSilent.h: high-freq thread rewrites AimingInfo direction.
     bool wasSilent = isAimSilent;
     isAimSilent = ESPPrefsBool(@"AimSilent", NO);
     if (wasSilent && !isAimSilent) {
         SilentAimStop();
     }
-    // Aimbot, Aim Assist, Silent are independent pipelines.
 
     isFastReload = ESPPrefsBool(@"FastReload", NO);
     fastReloadSpeed = ESPPrefsFloat(@"FastReloadSpeed", 1.0f);
-    // Legacy: force-off removed InstantHeal / Fast Weapon Switch prefs.
     ESPPrefsSetBool(@"InstantHeal", NO);
     ESPPrefsSetBool(@"FastWeaponSwitch", NO);
     isCamPC    = ESPPrefsBool(@"CamPC", NO);
@@ -2350,7 +2281,6 @@ void ESPSyncFromPrefs(void) {
     aimFov = ESPPrefsFloat(@"Fov", 150.0f);
     if (aimFov <= 1.0f) aimFov = 150.0f;
 
-    // Prefer AimDistance. Migrate old builds that stored aim range under "Distance" as a float > 1.
     aimDistance = ESPPrefsFloat(@"AimDistance", -1.0f);
     if (aimDistance < 0.0f) {
         id legacy = AppSettingsObjectForKey(@"Distance");
@@ -2374,7 +2304,6 @@ void ESPSyncFromPrefs(void) {
 
     NSString *customDefault = @"@Bolaminhduc";
     NSString *newName = AppSettingsObjectForKey(@"CustomName");
-    // Migrate old default names to new brand.
     if (![newName isKindOfClass:[NSString class]] || ((NSString *)newName).length == 0 ||
         [newName containsString:@"thanhhoa"] || [newName containsString:@"Thanhhoa"] ||
         [newName containsString:@"Ng_thanhhoa"] || [newName containsString:@"ng_thanhhoa"]) {
@@ -2422,6 +2351,85 @@ void ESPSyncFromPrefs(void) {
     aimAssistR = ESPPrefsFloat(@"AimAssistColorR", 0.0f); aimAssistG = ESPPrefsFloat(@"AimAssistColorG", 1.0f); aimAssistB = ESPPrefsFloat(@"AimAssistColorB", 1.0f);
 }
 
+// ============================================================
+// [7-SEG] Vẽ số đếm cho isCount — SB chỉ mirror shape, không
+// mirror text. Local view vẫn dùng statusLayer text gốc.
+// Bit map: bit0=a bit1=b bit2=c bit3=d bit4=e bit5=f bit6=g
+// ============================================================
+static const uint8_t kSeg7Map[10] = {
+    0b0111111, 0b0000110, 0b1011011, 0b1001111, 0b1100110,
+    0b1101101, 0b1111101, 0b0000111, 0b1111111, 0b1101111,
+};
+
+static void AppendSeg7(CGMutablePathRef p, uint8_t segs,
+                       float x, float y, float w, float h, float t) {
+    if (!p) return;
+    const float half = h * 0.5f;
+    if (segs & 0x01) CGPathAddRect(p, NULL, CGRectMake(x + t, y, w - 2*t, t));                            // a
+    if (segs & 0x02) CGPathAddRect(p, NULL, CGRectMake(x + w - t, y + t, t, half - 1.5f*t));              // b
+    if (segs & 0x04) CGPathAddRect(p, NULL, CGRectMake(x + w - t, y + half + 0.5f*t, t, half - 1.5f*t));  // c
+    if (segs & 0x08) CGPathAddRect(p, NULL, CGRectMake(x + t, y + h - t, w - 2*t, t));                    // d
+    if (segs & 0x10) CGPathAddRect(p, NULL, CGRectMake(x, y + half + 0.5f*t, t, half - 1.5f*t));          // e
+    if (segs & 0x20) CGPathAddRect(p, NULL, CGRectMake(x, y + t, t, half - 1.5f*t));                      // f
+    if (segs & 0x40) CGPathAddRect(p, NULL, CGRectMake(x + t, y + half - 0.5f*t, w - 2*t, t));            // g
+}
+
+static void AppendNumber7(CGMutablePathRef p, int num,
+                          float x, float y, float dw, float dh,
+                          float t, float gap) {
+    if (!p) return;
+    if (num < 0) num = 0;
+    if (num > 999999) num = 999999;
+    char buf[16];
+    int n = snprintf(buf, sizeof(buf), "%d", num);
+    if (n <= 0) return;
+    for (int i = 0; i < n; i++) {
+        int d = buf[i] - '0';
+        if (d < 0 || d > 9) d = 0;
+        AppendSeg7(p, kSeg7Map[d], x + (float)i * (dw + gap), y, dw, dh, t);
+    }
+}
+
+// "CLEAR" thô 5 chữ cái bằng rect (cho trạng thái count = 0)
+static void AppendClearText(CGMutablePathRef p, float x, float y,
+                            float w, float h, float t) {
+    if (!p) return;
+    const float gap = w * 0.35f;
+    float cx = x;
+
+    // C
+    CGPathAddRect(p, NULL, CGRectMake(cx, y, w, t));
+    CGPathAddRect(p, NULL, CGRectMake(cx, y, t, h));
+    CGPathAddRect(p, NULL, CGRectMake(cx, y + h - t, w, t));
+    cx += w + gap;
+
+    // L
+    CGPathAddRect(p, NULL, CGRectMake(cx, y, t, h));
+    CGPathAddRect(p, NULL, CGRectMake(cx, y + h - t, w, t));
+    cx += w + gap;
+
+    // E
+    CGPathAddRect(p, NULL, CGRectMake(cx, y, w, t));
+    CGPathAddRect(p, NULL, CGRectMake(cx, y, t, h));
+    CGPathAddRect(p, NULL, CGRectMake(cx, y + h*0.5f - t*0.5f, w*0.85f, t));
+    CGPathAddRect(p, NULL, CGRectMake(cx, y + h - t, w, t));
+    cx += w + gap;
+
+    // A
+    CGPathAddRect(p, NULL, CGRectMake(cx, y, t, h));
+    CGPathAddRect(p, NULL, CGRectMake(cx + w - t, y, t, h));
+    CGPathAddRect(p, NULL, CGRectMake(cx, y, w, t));
+    CGPathAddRect(p, NULL, CGRectMake(cx, y + h*0.5f - t*0.5f, w, t));
+    cx += w + gap;
+
+    // R
+    CGPathAddRect(p, NULL, CGRectMake(cx, y, t, h));
+    CGPathAddRect(p, NULL, CGRectMake(cx, y, w, t));
+    CGPathAddRect(p, NULL, CGRectMake(cx + w - t, y, t, h*0.6f));
+    CGPathAddRect(p, NULL, CGRectMake(cx, y + h*0.55f - t*0.5f, w, t));
+    CGPathAddRect(p, NULL, CGRectMake(cx + w*0.5f, y + h*0.55f, t, h*0.45f));
+}
+
 @interface HTHESPSecureWrapper : UITextField
 @end
 @implementation HTHESPSecureWrapper
@@ -2452,6 +2460,9 @@ void ESPSyncFromPrefs(void) {
 @property (nonatomic, strong) CAShapeLayer *alertLayer;
 @property (nonatomic, strong) CAShapeLayer *fovLayer;
 @property (nonatomic, strong) CAShapeLayer *aimAssistLayer;
+
+// [COUNT-SHAPE] Layer vẽ số đếm cho SpringBoard (SB chỉ mirror shape).
+@property (nonatomic, strong) CAShapeLayer *countLayer;
 
 @property (nonatomic, strong) CAShapeLayer *alertNumBGLayer;
 @property (nonatomic, strong) CAShapeLayer *alertNumGreenLayer;
@@ -2508,6 +2519,7 @@ static void ESPViewAddImageCallback(void *context, UIImage *image, CGRect frame)
     self.bgFillBlackLayer.path = nil; self.aimAssistLayer.path = nil;
     self.alertNumBGLayer.path = nil; self.alertNumGreenLayer.path = nil;
     self.alertNumOrangeLayer.path = nil; self.alertNumRedLayer.path = nil;
+    self.countLayer.path = nil;                    // [COUNT-SHAPE]
     self.statusLayer.hidden = YES;
     [self resetReusableLayers];
 }
@@ -2515,15 +2527,9 @@ static void ESPViewAddImageCallback(void *context, UIImage *image, CGRect frame)
 static void *gEngine = (void *)1; // DSMemory mode
 mach_port_t task;
 
-// Brutal restore must run even when all ESP/aim toggles are off.
-// Early-return used to skip the patch block → leave-match "lỗi brutal" + turbo stick.
 static std::atomic<bool> g_brutalPatched{false};
 static std::atomic<bool> g_brutalHasAddrs{false};
 
-// DIAG_EARLY: rate-limited one-line reason why the render path stopped.
-// Shows up in the Home log card so "cheat has no effect" becomes diagnosable
-// from the user's screen (no-base = attach failed, lobby = in lobby,
-// no-matchGame = offset wrong, ok = apply path reached).
 #define DIAG_EARLY(reason) do { \
     static CFTimeInterval s_lastDiagE = 0; \
     CFTimeInterval nowE = CACurrentMediaTime(); \
@@ -2537,10 +2543,6 @@ static std::atomic<bool> g_brutalHasAddrs{false};
     } \
 } while (0)
 
-// LOBBY diag variant — logs the RAW first TypeInfo read so it can be
-// compared with the working TIPA build. If base+0xC012848 returns a
-// different pointer here than on TIPA, the remap reads are corrupting data;
-// if it matches, the offset chain (statics +0xB8 → matchGame) is what fails.
 #define DIAG_EARLY_LOBBY() do { \
     static CFTimeInterval s_lastDiagL = 0; \
     CFTimeInterval nowL = CACurrentMediaTime(); \
@@ -2560,30 +2562,6 @@ static std::atomic<bool> g_brutalHasAddrs{false};
     } \
 } while (0)
 
-// ── DIAG heartbeat ────────────────────────────────────────────────────────
-// One unconditional line per second, printed from the top of updateFrame
-// BEFORE every early return. The previous measurement round buried its DIAGs
-// behind the in-match gate, so a log captured during lobby/loading contained
-// none of them and proved nothing. This line always prints, so the log says
-// which gate is blocking AND what the previous frame actually produced.
-//
-//   base= pid= at=            attach state (ds_attached / ds_pid / Moudule_Base)
-//   ti= st=                  raw kGameFacadeTypeInfo read and *(ti+0xB8) —
-//                            the head of the matchGame chain, before any
-//                            further indirection
-//   mg= cam= mt= pawn= hp=   the pointer chain, one stage at a time; the first
-//                            one that is 0 is the gate that stopped us
-//   real= bot=               players the LAST completed frame managed to draw
-//                            (real=0 ⇒ data/chain, not projection)
-//   cache{g= live= stale=}   g = cache generation, stale = slots mapped before
-//                            generation g. stale>0 ⇒ the cache crossed a match
-//                            boundary and is serving freed memory.
-//   VP{ok= m0= m3= m12= m15=} view-projection row terms WorldToScreen uses;
-//                            m3/m12 are the w-row constants it divides by.
-//                            Identical across samples while the camera turns ⇒
-//                            the matrix is frozen, the drawing is innocent.
-// Bump this every commit that changes measurement, so a device log identifies
-// its own build. Absence of this token = the IPA on the device is older.
 #define ESP_DIAG_BUILD "FLUSH1"
 
 static int g_hbLastReal = -1;
@@ -2626,11 +2604,6 @@ static void ESPDiagHeartbeat(void) {
 
     DSPageCacheDiag cd = ds_page_cache_diag();
 
-    // %s, NOT %@. ESP_DIAG_BUILD is a C string literal, and %@ makes os_log send
-    // -objcDescription to it: it dereferences the literal's own bytes ("PUSH1\0")
-    // as an isa, follows the garbage, and SIGSEGVs on the main queue.
-    // That is the crash in incident 5793D039 (run #198, ddbc6a16), whose stack is
-    // NSLog -> ESPDiagHeartbeat -> dispatch block. Fixed here only; no other change.
     NSLog(@"[HB] %s base=0x%llx pid=%d at=%d ti=0x%llx st=0x%llx mg=0x%llx cam=0x%llx "
           @"mt=0x%llx pawn=0x%llx hp=%d real=%d bot=%d "
           @"cache{g=%llu,live=%d,stale=%d} "
@@ -2645,9 +2618,6 @@ static void ESPDiagHeartbeat(void) {
           vpOk, vp[0], vp[3], vp[12], vp[15]);
 }
 
-
-
-
 - (instancetype)initWithFrame:(CGRect)frame {
     self = [super initWithFrame:frame];
     if (self) {
@@ -2656,9 +2626,6 @@ static void ESPDiagHeartbeat(void) {
         self.textLayerPool = [NSMutableArray arrayWithCapacity:300];
         self.imageLayerPool = [NSMutableArray arrayWithCapacity:80];
         
-        // NOTE: no dispatch_once attach here! The game may not be running yet
-        // (attach via DSMemory is retried every frame in updateFrame). A once-
-        // cached Moudule_Base=0 permanently disabled ESP until app restart.
         InitWeaponTextures();
         gEngine = (void *)1; // DSMemory
 
@@ -2678,17 +2645,8 @@ static void ESPDiagHeartbeat(void) {
         
         [self configureRenderingLayers];
 
-        // 60fps GCD timer — NOT CADisplayLink. CADisplayLink is paused by
-        // iOS when the app is backgrounded (game in foreground), so ESP froze.
-        // A dispatch_source timer on the main queue keeps firing while the
-        // process is alive (audio KeepAlive), so the overlay keeps rendering
-        // over the game.
-            self.frameTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
+        self.frameTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
         if (self.frameTimer) {
-            // 22ms (~45fps) instead of 16ms (~60fps): the read pass is 8-12ms,
-            // so a 16ms interval leaves zero headroom and the main thread
-            // collides with the previous tick every frame. 22ms lets the read
-            // finish and cuts CPU load about a third.
             dispatch_source_set_timer(self.frameTimer,
                                       dispatch_time(DISPATCH_TIME_NOW, 22 * NSEC_PER_MSEC),
                                       22 * NSEC_PER_MSEC,
@@ -2751,7 +2709,23 @@ static void ESPDiagHeartbeat(void) {
     self.alertNumOrangeLayer = [self buildShapeLayerWithStroke:[UIColor orangeColor] fill:[UIColor clearColor] lineWidth:4.0f zPos:baseZ + 8];
     self.alertNumRedLayer = [self buildShapeLayerWithStroke:[UIColor redColor] fill:[UIColor clearColor] lineWidth:4.0f zPos:baseZ + 8];
 
-    NSArray *layers = @[self.bgFillBlackLayer, self.fovLayer, self.snaplineLayer, self.snaplineBotLayer, self.snaplineKnockedLayer, self.boneLayer, self.boneBotLayer, self.boneKnockedLayer, self.boxLayer, self.boxBotLayer, self.boxKnockedLayer, self.hpFillGreenLayer, self.hpFillOrangeLayer, self.hpFillRedLayer, self.alertLayer, self.aimAssistLayer, self.alertNumBGLayer, self.alertNumGreenLayer, self.alertNumOrangeLayer, self.alertNumRedLayer];
+    // [COUNT-SHAPE] Layer vẽ số đếm cho SB — fill trắng để SB mirror rõ.
+    self.countLayer = [self buildShapeLayerWithStroke:nil
+                                                 fill:[UIColor whiteColor]
+                                            lineWidth:0
+                                                zPos:baseZ + 9];
+
+    NSArray *layers = @[
+        self.bgFillBlackLayer, self.fovLayer,
+        self.snaplineLayer, self.snaplineBotLayer, self.snaplineKnockedLayer,
+        self.boneLayer, self.boneBotLayer, self.boneKnockedLayer,
+        self.boxLayer, self.boxBotLayer, self.boxKnockedLayer,
+        self.hpFillGreenLayer, self.hpFillOrangeLayer, self.hpFillRedLayer,
+        self.alertLayer, self.aimAssistLayer,
+        self.alertNumBGLayer, self.alertNumGreenLayer,
+        self.alertNumOrangeLayer, self.alertNumRedLayer,
+        self.countLayer    // [COUNT-SHAPE]
+    ];
 
     for (CAShapeLayer *layer in layers) {
         [_secureCanvas.layer addSublayer:layer];
@@ -2857,8 +2831,6 @@ static void ESPDiagHeartbeat(void) {
     if (!CGRectEqualToRect(layer.frame, frame)) layer.frame = frame;
 }
 
-// Monotonic microseconds, for the per-phase render breakdown. Local to the
-// render loop so the two timers in this project stay independent.
 static inline uint64_t ESPPhaseNowUS(void) {
     static mach_timebase_info_data_t tb;
     static dispatch_once_t once;
@@ -2867,26 +2839,15 @@ static inline uint64_t ESPPhaseNowUS(void) {
 }
 
 - (void)updateFrame {
-    // NOTE: no self.window guard — the view may be an OFFSCREEN data source
-    // (host window alpha=0, never visible). The GCD frame timer drives the
-    // game reads + the SpringBoard mirror; stopping when not on screen
-    // would freeze the SB overlay. The timer itself is the lifecycle.
-
     @autoreleasepool {
-        // ✅ FIX FPS DROP: ESPSyncFromPrefs chỉ gọi mỗi 1 giây, không phải mỗi frame
         static CFTimeInterval lastPrefSync = 0;
         CFTimeInterval now = CACurrentMediaTime();
         if (now - lastPrefSync > 1.0) {
             ESPSyncFromPrefs();
             lastPrefSync = now;
         }
-        // Runs before every early return below, so the log always carries the
-        // gate state even when the render path bails out immediately.
         ESPDiagHeartbeat();
         
-        // Color / thickness: use synced globals most frames. Re-read prefs only while
-        // rainbow is on or ~8×/s so RGB picker still feels live without 16 prefs
-        // reads every vsync (that hitch made ESP stutter on Pro).
         {
             static CFTimeInterval s_lastColorPref = 0;
             static int s_liveBoxMode = 0, s_liveLineMode = 0, s_liveBoneMode = 0, s_liveFovMode = 0;
@@ -2953,10 +2914,6 @@ static inline uint64_t ESPPhaseNowUS(void) {
         self.aimAssistLayer.lineWidth = aimAssistThick;
         self.aimAssistLayer.strokeColor = [UIColor colorWithRed:aimAssistR green:aimAssistG blue:aimAssistB alpha:1.0f].CGColor;
 
-        // Keep frame alive when Brutal needs work (ON, still patched, or has saved addrs to restore).
-        // Critical: user turns Brutal OFF after leave → must NOT early-return before restore.
-        // CamPC must ALSO keep the frame alive — it was missing from this list,
-        // so "only CamPC on" early-returned and CamPC never applied.
         const bool brutalNeedsFrame = Norecoil || g_brutalPatched.load() || g_brutalHasAddrs.load();
         if (!isESP && !isESP2 && !isAimbot && !isAimAssist && !isAimSilent && !isSpeed && !isCamPC && !brutalNeedsFrame) {
             [self clearAllContent];
@@ -2977,7 +2934,17 @@ static inline uint64_t ESPPhaseNowUS(void) {
             _secureCanvas = _secureTextField.subviews.firstObject ?: _secureTextField;
             _secureCanvas.userInteractionEnabled = NO; 
             
-            NSArray *layers = @[self.bgFillBlackLayer, self.fovLayer, self.snaplineLayer, self.snaplineBotLayer, self.snaplineKnockedLayer, self.boneLayer, self.boneBotLayer, self.boneKnockedLayer, self.boxLayer, self.boxBotLayer, self.boxKnockedLayer, self.hpFillGreenLayer, self.hpFillOrangeLayer, self.hpFillRedLayer, self.alertLayer, self.aimAssistLayer, self.alertNumBGLayer, self.alertNumGreenLayer, self.alertNumOrangeLayer, self.alertNumRedLayer];
+            NSArray *layers = @[
+                self.bgFillBlackLayer, self.fovLayer,
+                self.snaplineLayer, self.snaplineBotLayer, self.snaplineKnockedLayer,
+                self.boneLayer, self.boneBotLayer, self.boneKnockedLayer,
+                self.boxLayer, self.boxBotLayer, self.boxKnockedLayer,
+                self.hpFillGreenLayer, self.hpFillOrangeLayer, self.hpFillRedLayer,
+                self.alertLayer, self.aimAssistLayer,
+                self.alertNumBGLayer, self.alertNumGreenLayer,
+                self.alertNumOrangeLayer, self.alertNumRedLayer,
+                self.countLayer    // [COUNT-SHAPE]
+            ];
             for (CAShapeLayer *layer in layers) {
                 [_secureCanvas.layer addSublayer:layer];
             }
@@ -2992,9 +2959,6 @@ static inline uint64_t ESPPhaseNowUS(void) {
             self.activeImageLayerCount = 0;
         }
 
-        // Re-attach when HUD opened before game, or game restarted (pid change).
-        // Do NOT zero Module_Base when GameFacade probe fails — Brutal/pattern
-        // write still needs task; ESP just skips until match pointers resolve.
         {
             static pid_t s_attachedPid = -1;
             static int s_reattachCooldown = 0;
@@ -3005,7 +2969,6 @@ static inline uint64_t ESPPhaseNowUS(void) {
                     s_reattachCooldown--;
                 } else {
                     GameOffsetsReload();
-                    // DSMemory self-detects FF by name + re-walks the vm_map.
                     uintptr_t base = (uintptr_t)GameTargetModuleBase();
                     if (base != 0 && ds_attached()) {
                         Moudule_Base = (uint64_t)base;
@@ -3015,38 +2978,16 @@ static inline uint64_t ESPPhaseNowUS(void) {
                     } else {
                         Moudule_Base = 0;
                         s_attachedPid = -1;
-                        s_reattachCooldown = 30; // ~0.5s at 60fps — poll game launch
+                        s_reattachCooldown = 30;
                     }
                 }
             }
         }
 
         [CATransaction begin];
-        // Per-phase timing for the render loop. The overlay publishes at about
-        // 35fps with a frame cost of 8 to 12ms, so the publish is not what
-        // limits the rate any more: the loop that produces the geometry is.
-        // This splits that loop into the part that reads the game and builds
-        // geometry, the part that pushes it into the CAShapeLayers, and the
-        // part that serialises and hands it to SpringBoard, so the next change
-        // goes where the time actually is rather than where it is assumed to
-        // be. Sampled once a second so the log stays readable.
         const uint64_t tPhase0 = ESPPhaseNowUS();
         [self resetReusableLayers];
 
-        // Free Fire renders landscape. This process never rotates, because it
-        // is a background app while the game owns the screen, so self.bounds is
-        // permanently the portrait pair (390x844). The projection matrix read
-        // out of the game, however, was built for the landscape pair
-        // (844x390). Handing the portrait pair to WorldToScreenLayer transposes
-        // the axes: horizontal edges come out vertical, and boxes no longer sit
-        // on the players. That is the "wrong orientation" report, and it is a
-        // space mismatch rather than a drawing bug.
-        //
-        // An earlier attempt swapped only the matrix and kept the draw space
-        // portrait, which is why it was reverted: project and draw have to use
-        // the same pair. Both now use landscape, and SpringBoardOverlay maps
-        // every point into the portrait layer on serialisation, so the two
-        // spaces are converted in exactly one place.
         const CGFloat bw = self.bounds.size.width;
         const CGFloat bh = self.bounds.size.height;
         CGFloat viewWidth  = (bw > bh) ? bw : bh;
@@ -3062,8 +3003,6 @@ static inline uint64_t ESPPhaseNowUS(void) {
 
         ESPGeometryBuffers buffers = ESPGeometryBuffersCreate();
         g_PlayerDrawIndex = 1;
-        // Fl0rk DarkSwordMemoryProvider beginReadTransaction / endReadTransaction:
-        // keep remapped pages hot across the whole frame (bones/HP/dict).
         ds_begin_read_transaction();
         ESPFrameStats stats = [self renderESPWithBuffers:&buffers viewWidth:viewWidth viewHeight:viewHeight matrixVpWidth:matrixVpW matrixVpHeight:matrixVpH screenCenter:screenCenter];
         const uint64_t tPhase1 = ESPPhaseNowUS();
@@ -3088,16 +3027,11 @@ static inline uint64_t ESPPhaseNowUS(void) {
         MenuViewApplyPath(self.hpFillRedLayer, showVisuals ? buffers.hpFillRedPath : nil, buffers.hpFillRedDirty);
         MenuViewApplyPath(self.alertLayer, showVisuals ? buffers.alertPath : nil, buffers.alertDirty);
 
-        // The dirty flags are read by the [APP-LAYER] diagnostic further down,
-        // which runs after ESPGeometryBuffersRelease has freed the paths, so
-        // they are copied here while the buffers are still alive.
         static int s_dirtyBox = 0, s_dirtyBone = 0, s_dirtySnap = 0, s_dirtyHpG = 0;
         s_dirtyBox = buffers.boxDirty;
         s_dirtyBone = buffers.boneDirty;
         s_dirtySnap = buffers.snaplineDirty;
         s_dirtyHpG  = buffers.hpFillGreenDirty;
-
-
 
         if (showVisuals && stats.aimAssistPath) {
             MenuViewApplyPath(self.aimAssistLayer, stats.aimAssistPath, YES);
@@ -3109,16 +3043,19 @@ static inline uint64_t ESPPhaseNowUS(void) {
         ESPGeometryBuffersRelease(&buffers);
 
         CGMutablePathRef fovPath = CGPathCreateMutable();
-        // FOV circle only for Aimbot FOV mode (0) + ShowFovCircle ON.
-        // 180/360 hide the ring. Assist uses game crosshair (no FOV ring).
-        BOOL hasFov = RenderFOVCirclePath(fovPath, viewWidth, viewHeight,
-                                          isAimbot && aimSphereMode == 0 && isShowFovCircle, aimFov);
+        // ============================================================
+        // [FOV-FIX] Vòng FOV hiện khi:
+        //   - Aimbot ON + sphere mode = 0 (FOV) + ShowFovCircle ON
+        //   - HOẶC Silent ON + ShowFovCircle ON
+        // 180/360 ẩn ring (aim mọi hướng).
+        // ============================================================
+        BOOL fovActive =
+            isShowFovCircle &&
+            ((isAimbot && aimSphereMode == 0) || isAimSilent);
+        BOOL hasFov = RenderFOVCirclePath(fovPath, viewWidth, viewHeight, fovActive, aimFov);
         self.fovLayer.path = hasFov ? fovPath : nil;
         CGPathRelease(fovPath);
 
-        // Every layer has now been assigned, fovLayer and aimAssistLayer
-        // included, so this is the first point at which the counts describe
-        // the frame on screen rather than the one before it.
         {
             static uint32_t s_layerLogTick = 0;
             if ((++s_layerLogTick % 60u) == 1u) {
@@ -3141,6 +3078,10 @@ static inline uint64_t ESPPhaseNowUS(void) {
             }
         }
 
+        // ============================================================
+        // [COUNT] GIỮ NGUYÊN 100% block gốc (statusLayer CATextLayer).
+        // Local view hiển thị text có màu đầy đủ.
+        // ============================================================
         if (isCount) {
             NSString *countText;
             UIColor *countColor;
@@ -3157,7 +3098,6 @@ static inline uint64_t ESPPhaseNowUS(void) {
                     fontSize = 21.0f;
                 }
             } else {
-                // Đổi đỏ → xanh lá (user: bỏ vẽ đỏ thừa; đỏ chỉ dành cho knocked/HP thấp).
                 if (isESP2) {
                     countText = [NSString stringWithFormat:@"%d", stats.realCount + stats.botCount];
                     countColor = [UIColor colorWithRed:50.0f/255.0f green:255.0f/255.0f blue:80.0f/255.0f alpha:1.0f];
@@ -3177,8 +3117,6 @@ static inline uint64_t ESPPhaseNowUS(void) {
                 self.statusLayer.font = (__bridge CFTypeRef)LoadCountFont(fontSize).fontName;
             }
 
-            // Tight frame around text only (was 200x50) — visual only; CATextLayer
-            // never receives touches, but keep bounds small and non-interactive flags set.
             CGFloat countWidth = isESP2 ? 80.0f : 220.0f;
             CGFloat countHeight = fontSize + 8.0f;
             CGFloat yPos = isESP2 ? 30.0f : 25.0f;
@@ -3189,17 +3127,84 @@ static inline uint64_t ESPPhaseNowUS(void) {
                 self.statusLayer.frame = newStatusFrame;
             }
             self.statusLayer.masksToBounds = NO;
-            // CALayer has no userInteraction; ensure parent views stay pass-through.
             if (self.statusLayer.hidden) self.statusLayer.hidden = NO;
+
+            // ============================================================
+            // [COUNT-SHAPE] Vẽ số đếm bằng 7-seg cho SpringBoard.
+            // SB chỉ mirror CAShapeLayer, không mirror CATextLayer.
+            // Local view vẫn hiển thị text gốc ở statusLayer phía trên.
+            // ============================================================
+            CGMutablePathRef cp = CGPathCreateMutable();
+            const int total = stats.realCount + stats.botCount;
+            const float baseY = isESP2 ? 22.0f : 20.0f;
+
+            if (total == 0) {
+                // CLEAR
+                const float cw = 10.0f, ch = 14.0f, ct = 2.5f, cgap = 3.5f;
+                const float totalW = 5.0f * cw + 4.0f * cgap;
+                AppendClearText(cp, halfWidth - totalW * 0.5f, baseY, cw, ch, ct);
+            } else if (isESP2) {
+                // Chỉ tổng số
+                const float dw = 12.0f, dh = 18.0f, t = 2.5f, g = 3.0f;
+                char b[8];
+                int n = snprintf(b, sizeof(b), "%d", total);
+                float totalW = (float)n * dw + (n > 1 ? (float)(n - 1) * g : 0.0f);
+                AppendNumber7(cp, total, halfWidth - totalW * 0.5f, baseY, dw, dh, t, g);
+            } else {
+                // P <real> | B <bot>
+                const float dw = 9.0f, dh = 14.0f, t = 2.0f, g = 2.5f;
+                const float labelW = 9.0f;
+                const float sepW   = 14.0f;
+
+                char b1[8]; int n1 = snprintf(b1, sizeof(b1), "%d", stats.realCount);
+                char b2[8]; int n2 = snprintf(b2, sizeof(b2), "%d", stats.botCount);
+                float w1 = (float)n1 * dw + (n1 > 1 ? (float)(n1 - 1) * g : 0.0f);
+                float w2 = (float)n2 * dw + (n2 > 1 ? (float)(n2 - 1) * g : 0.0f);
+
+                float totalW = labelW + g + w1 + sepW + labelW + g + w2;
+                float x0 = halfWidth - totalW * 0.5f;
+                const float y2 = baseY;
+
+                // P
+                CGPathAddRect(cp, NULL, CGRectMake(x0, y2, t, dh));
+                CGPathAddRect(cp, NULL, CGRectMake(x0, y2, labelW, t));
+                CGPathAddRect(cp, NULL, CGRectMake(x0 + labelW - t, y2, t, dh*0.55f));
+                CGPathAddRect(cp, NULL, CGRectMake(x0, y2 + dh*0.55f - t*0.5f, labelW, t));
+                x0 += labelW + g;
+
+                // realCount
+                AppendNumber7(cp, stats.realCount, x0, y2, dw, dh, t, g);
+                x0 += w1 + sepW * 0.5f;
+
+                // dấu |
+                CGPathAddRect(cp, NULL, CGRectMake(x0 - t*0.5f, y2 - 1.0f, t, dh + 2.0f));
+                x0 += sepW * 0.5f;
+
+                // B
+                CGPathAddRect(cp, NULL, CGRectMake(x0, y2, t, dh));
+                CGPathAddRect(cp, NULL, CGRectMake(x0, y2, labelW, t));
+                CGPathAddRect(cp, NULL, CGRectMake(x0, y2 + dh - t, labelW, t));
+                CGPathAddRect(cp, NULL, CGRectMake(x0, y2 + dh*0.5f - t*0.5f, labelW, t));
+                CGPathAddRect(cp, NULL, CGRectMake(x0 + labelW - t, y2, t, dh));
+                x0 += labelW + g;
+
+                // botCount
+                AppendNumber7(cp, stats.botCount, x0, y2, dw, dh, t, g);
+            }
+
+            self.countLayer.path = cp;
+            CGPathRelease(cp);
+            if (self.countLayer.hidden) self.countLayer.hidden = NO;
         } else {
             if (!self.statusLayer.hidden) self.statusLayer.hidden = YES;
+            self.countLayer.path = nil;
+            if (!self.countLayer.hidden) self.countLayer.hidden = YES;
         }
 
         const uint64_t tPhase2 = ESPPhaseNowUS();
 
         [CATransaction commit];
 
-        // Mirror this frame to the SpringBoard dedicated overlay (if active).
         extern void SBRemotePushESPFrame(UIView *espView);
         SBRemotePushESPFrame(self);
 
@@ -3227,7 +3232,6 @@ static inline uint64_t ESPPhaseNowUS(void) {
         }
     }
 }
-
 - (ESPFrameStats)renderESPWithBuffers:(ESPGeometryBuffers *)buffers
                             viewWidth:(CGFloat)viewWidth
                            viewHeight:(CGFloat)viewHeight
@@ -3238,7 +3242,7 @@ static inline uint64_t ESPPhaseNowUS(void) {
     ESPFrameStats stats = {0, 0, false, NULL};
     stats.aimAssistPath = CGPathCreateMutable();
 
-    g_cacheFrameCounter++;          // Tăng frame counter mỗi lần render (dùng cho cache)
+    g_cacheFrameCounter++;
 
     CGMutablePathRef aNumBGPath = CGPathCreateMutable();
     CGMutablePathRef aNumGPath  = CGPathCreateMutable();
@@ -3273,32 +3277,11 @@ static inline uint64_t ESPPhaseNowUS(void) {
               (unsigned long long)matchGame, (unsigned long long)match, (unsigned long long)camera);
     }
 
-    // A new match tears the game's address space down and rebuilds it. Every
-    // page mapping we hold aliases a vm_object the game has already freed, and
-    // nothing else invalidates them (ds_detach only runs on a pid change). The
-    // symptom of holding those is ESP frozen on screen: the boxes are the same
-    // pixels every frame because the data behind them is the same freed memory.
-    // Report it rather than guess: staleGen > 0 means the cache crossed a match.
     {
         static uint64_t s_lastMatchDiag = 0;
         if (match != s_lastMatchDiag) {
-            // Fire on the FIRST valid match of this attach, not only on a
-            // change. The previous attempt hung the flush off `match` changing
-            // and the 19:51 log proved it never fires: mt=0x13d66e800 was
-            // constant for the whole window, so zero [FLUSH] lines. Entering a
-            // match is exactly when the lobby's pages go stale, and right after
-            // it Unity rebuilds the address space, so this is the moment worth
-            // dropping every slot.
             bool firstMatch = (s_lastMatchDiag == 0 && match != 0);
             if (s_lastMatchDiag != 0 || firstMatch) {
-                // A page slot pins one shmem mapping made by the kernel remap.
-                // ds_page_local (DSMemory.m:430) re-serves that slot on a bare
-                // VA match, with no re-validation and no age. Once Unity reuses
-                // the physical page, every later read of that VA is a frozen
-                // snapshot. Releasing slots drops the shmem ports so the next
-                // read re-maps. Once per match only, never per frame: the
-                // comment at DSMemory.m:410 records that a full per-frame flush
-                // caused RW-lock panics, and this is deliberately not that.
                 DSPageCacheDiag before = ds_page_cache_diag();
                 ds_flush_page_cache();
                 DSPageCacheDiag after = ds_page_cache_diag();
@@ -3325,10 +3308,6 @@ static inline uint64_t ESPPhaseNowUS(void) {
     int curHp = isVaildPtr(myPawnObject) ? get_CurHP(myPawnObject) : 0;
     bool iAmAlive = isVaildPtr(myPawnObject) && (curHp >= 0);
 
-    // Speed — Brutal run scale (slider) + menu Speed.
-    // Brutal ON: hold BrutalSpeed (default 0.16). Menu Speed only when Brutal OFF.
-    // Jitter fix: do NOT thrash RunSpeed every frame / fight pattern with hard clamps.
-    // Only re-write when value drifts; never clamp weapon while Brutal is on.
     if (isVaildPtr(myPawnObject)) {
         static int s_speedTick = 0;
         static float s_lastRunWrite = -1.0f;
@@ -3343,10 +3322,9 @@ static inline uint64_t ESPPhaseNowUS(void) {
             ++s_speedTick;
             if (PlayerAttributes != s_lastAttrs) {
                 s_lastAttrs = PlayerAttributes;
-                s_lastRunWrite = -1.0f; // new attrs object → re-seed
+                s_lastRunWrite = -1.0f;
             }
 
-            // Brutal: speedvalue from BrutalSpeed pref. Else menu Speed scale / 1.0.
             float writeVal = speedvalue;
             if (!Norecoil && isSpeed && moveSpeedScale > 1.0f) {
                 writeVal = moveSpeedScale;
@@ -3354,40 +3332,29 @@ static inline uint64_t ESPPhaseNowUS(void) {
             }
             if (writeVal <= 0.0f) writeVal = 1.0f;
 
-            // Hold run scale without per-frame spam (spam = giật khi chạy).
-            // Re-assert only when drifted or first write on this attrs.
             float cur = ReadAddr<float>(PlayerAttributes + runOff);
             const bool curBad = isnan(cur) || cur < 0.01f || cur > 80.0f;
             const float drift = (!curBad && s_lastRunWrite > 0.0f) ? fabsf(cur - writeVal) : 999.0f;
-            // Brutal: looser hold — game/pattern micro-updates shouldn't thrash us.
-            // Menu speed: tighter so boost stays accurate.
             const float reassertEps = Norecoil ? 0.04f : 0.015f;
             const bool needWrite =
                 curBad ||
                 s_lastRunWrite < 0.0f ||
-                fabsf(s_lastRunWrite - writeVal) > 0.001f || // slider changed
+                fabsf(s_lastRunWrite - writeVal) > 0.001f ||
                 drift > reassertEps ||
-                // Soft emergency: only insane turbo, not pattern micro bumps.
                 (!curBad && cur > (Norecoil ? 12.0f : 3.0f));
 
-            // Cadence: Brutal re-check every 3 frames max; Speed every frame if needed.
             const int cadence = Norecoil ? 3 : 1;
             if (needWrite && (Norecoil ? ((s_speedTick % cadence) == 0) : true)) {
                 WriteAddr<float>(PlayerAttributes + runOff, writeVal);
                 s_lastRunWrite = writeVal;
             }
 
-            // Force absolute OFF occasionally — not every frame.
-            // IMPORTANT: while Brutal is ON, do NOT clamp weapon scale (0x130).
-            // Pattern scan is super-fast fire — resetting weap→1.0 killed it.
-            // Also: do NOT touch fall while Brutal ON (fall clamp caused run hitch).
             if ((s_speedTick % 16) == 0) {
                 float force = ReadAddr<float>(PlayerAttributes + forceOff);
                 if (!isnan(force) && fabsf(force) > 0.001f)
                     WriteAddr<float>(PlayerAttributes + forceOff, 0.0f);
 
                 if (!Norecoil && writeVal <= 1.001f) {
-                    // Normal / no-speed only: clean leftover turbo after Brutal OFF.
                     float f = ReadAddr<float>(PlayerAttributes + fallOff);
                     if (!isnan(f) && f > 1.05f && f < 50.0f)
                         WriteAddr<float>(PlayerAttributes + fallOff, 1.0f);
@@ -3438,13 +3405,9 @@ static inline uint64_t ESPPhaseNowUS(void) {
         
         bool actualFastReload = isFastReload && (fastReloadSpeed > 1.0f);
         EnableFastReload(myPawnObject, actualFastReload, fastReloadSpeed);
-        // Kill vanilla AA (strength + AllOff) whenever custom aimbot/assist is on.
-        // Wall ON/OFF alike — no chest magnet when firing. LOS is geometric, not AA-list.
         DisableGameDefaultAimAssist(myPawnObject, isAimbot || isAimAssist);
         EnableCamPC(myPawnObject, isCamPC, camPCValue);
 
-        // DIAG (once per 5s): confirm the cheat apply-path is actually running
-        // and what CamPC sees — surfaces "no effect" causes without a debugger.
         {
             static CFTimeInterval s_lastDiag = 0;
             CFTimeInterval nowD = CACurrentMediaTime();
@@ -3455,10 +3418,6 @@ static inline uint64_t ESPPhaseNowUS(void) {
                       (unsigned long long)myPawnObject, (int)(isVaildPtr(myPawnObject) && get_CurHP(myPawnObject) > 0),
                       (int)isCamPC, camPCValue, (unsigned long long)fc, (int)isVaildPtr(fc));
 
-                // Is the view matrix actually LIVE? Print the first row and the
-                // two rows W2S divides by. If these are byte-identical across
-                // samples while the camera moves, the matrix is frozen and the
-                // projection -- not the drawing -- is what is stuck.
                 {
                     float m[16];
                     if (GetViewMatrixInto(camera, m)) {
@@ -3484,10 +3443,6 @@ static inline uint64_t ESPPhaseNowUS(void) {
 
     stats.inMatch = true;
 
-    // Camera / local origin for ESP distance + min/max cull.
-    // Bug history: when MainCameraTransform failed, myLocation stayed (0,0,0) while
-    // iAmAlive=true → Distance(origin, enemy) ~thousands → all real enemies culled.
-    // When iAmAlive=false (HP pool read 0), distance was hard-forced to 10m → ghosts.
     Vector3 myLocation = {0, 0, 0};
     if (isVaildPtr(myPawnObject)) {
         uint64_t mainCameraTransform = ReadAddr<uint64_t>(myPawnObject + kMainCameraTransform);
@@ -3506,17 +3461,10 @@ static inline uint64_t ESPPhaseNowUS(void) {
         }
     }
     const bool haveLocalPos = looksLikeWorldPos(myLocation);
-    // Treat as "alive enough" for distance math if we have a local world anchor
-    // (spectator / HP-pool glitch still gets correct culls instead of fake 10m).
     const bool useLocalDistance = haveLocalPos;
 
-    // Simple dump-backed player dict walk (no multi-layout probe every frame).
-    // Dictionary<BHGGAEEHJCO,Player> @ match+kMatchPlayerDict
-    // Entry: hash+next+key(0x18)+value* => stride 0x28, value @ 0x20
     uint64_t playerDict = ReadAddr<uint64_t>(match + kMatchPlayerDict);
     if (!isVaildPtr(playerDict)) {
-        // Fallback other known dict slots if primary empty.
-        // NOTE: 0x148 is Dictionary<byte,Player> — WRONG for ESP (GameOffsets comment).
         const uint64_t alts[] = { 0x130, 0x138, 0x140, 0x150, 0x120, 0x118 };
         for (size_t ai = 0; ai < sizeof(alts)/sizeof(alts[0]) && !isVaildPtr(playerDict); ai++) {
             playerDict = ReadAddr<uint64_t>(match + alts[ai]);
@@ -3542,14 +3490,10 @@ static inline uint64_t ESPPhaseNowUS(void) {
     if (slotCap <= 0 || slotCap > 2048) {
         return stats;
     }
-    // dictCount can be 0 briefly; still allow walk if array exists.
 
-    // View-projection is sampled AFTER world collect (see below). Reading it here
-    // made boxes lag behind cam while the player loop did heavy memory I/O.
     float matrixData[16];
     memset(matrixData, 0, sizeof(matrixData));
 
-    // Phase-1 collect buffer (world space only — no W2S yet).
     EspPawnSnap snaps[128];
     int snapN = 0;
 
@@ -3559,7 +3503,6 @@ static inline uint64_t ESPPhaseNowUS(void) {
     __attribute__((unused)) float bestDistance = FLT_MAX;
     __attribute__((unused)) bool isVis = false;
 
-    // Relative LOS buckets MUST live outside the player loop (reset once per frame).
     uint64_t bestAnyTarget = 0, bestLosTarget = 0;
     Vector3 bestAnyHead{}, bestLosHead{};
     float bestAnyScore = FLT_MAX, bestLosScore = FLT_MAX;
@@ -3567,28 +3510,27 @@ static inline uint64_t ESPPhaseNowUS(void) {
     bool bestAnyVis = false, bestLosVis = false;
     (void)bestLosVis;
 
-    // Pipelines:
-    // - Aimbot FOV/180/360: hard LookAt (camera snap) + AimTargetMode priority.
-    // - Aim Assist: may stack with Aimbot; alone = near-crosshair magnet, same AimPos.
-    // - Silent: magic bullet — independent HitObject spoof while firing.
     isAimBehindWall = AimBehindWallNow();
-    // Sample game weapon raycast once/frame for thorough wall-off LOS.
     AimWallOffFrameBegin(myPawnObject, myLocation);
     const bool useAssist = isAimAssist;
-    const bool useAssistOnly = isAimAssist && !isAimbot; // assist magnet radius only when solo
-    // Silent/360 only with wall-through ON.
-    bool useSilent = isAimSilent && AimThroughAnyCoverNow();
-    if (isAimSilent && !AimThroughAnyCoverNow()) {
+    const bool useAssistOnly = isAimAssist && !isAimbot;
+
+    // ============================================================
+    // [SILENT-FIX] Silent chạy ĐỘC LẬP — không bắt buộc AimBehindWall.
+    //   Wall-OFF: silent vẫn pick target trong FOV, chỉ yêu cầu LOS
+    //             khi fire (silentFireWindow).
+    //   Wall-ON : silent bỏ qua LOS, xuyên tường.
+    // ============================================================
+    bool useSilent = isAimSilent;
+    if (!isAimSilent) {
         SilentAimClearTarget();
     }
     bool useAim = (isAimbot || useAssist || useSilent);
     const bool useAim180 = isAimbot && aimSphereMode == 1;
-    // 360 only with wall-through ON.
     const bool useAim360 = isAimbot && aimSphereMode == 2 && AimThroughAnyCoverNow();
     const bool useSphereAim = useAim180 || useAim360;
     const bool silentSphereOnly = useSilent && !isAimbot && !useAssist;
 
-    // FOV gate when Aimbot FOV mode; Assist-only uses assist radius; stacked → FOV.
     const float aimFovSq = (isAimbot && !useSphereAim) ? (aimFov * aimFov) : 0.0f;
     const float assistRadius = fminf(fmaxf(viewHeight * 0.12f, 48.f), 140.f);
     const float assistRadiusSq = assistRadius * assistRadius;
@@ -3605,7 +3547,6 @@ static inline uint64_t ESPPhaseNowUS(void) {
     for (int i = 0; i < loopCount; i++) {
         uint64_t ent = entriesBase + entryStride * (uint64_t)i;
         int hc = ReadAddr<int>(ent);
-        // Free slots typically 0 or -1.
         if (hc == 0 || hc == -1) continue;
 
         uint64_t PawnObject = ReadAddr<uint64_t>(ent + entryValueOff);
@@ -3620,19 +3561,12 @@ static inline uint64_t ESPPhaseNowUS(void) {
             }
         }
         if (!isVaildPtr(PawnObject)) continue;
-        // Skip self: pointer, UserID, or PlayerID (local pointer can mismatch after death/rejoin).
         if (isSamePlayerAsLocal(myPawnObject, PawnObject)) continue;
-        // Skip teammates when local is known.
         if (isVaildPtr(myPawnObject) &&
-    isLocalTeamMate(myPawnObject, PawnObject)) {
-    continue;
-}
+            isLocalTeamMate(myPawnObject, PawnObject)) {
+            continue;
+        }
 
-
-        // HP/knocked EVERY frame (stale cache was the floating "ghost ESP" after kills).
-        // Bot flag can lag 1 frame; vis only when Check Visible is on.
-        // Use pawn-stable slot (hash), not walk index — prevents cache thrash when
-        // dict walk order changes or pawns leave/re-enter range (the "treo" cause).
         PlayerCache &c = g_playerCache[PlayerCacheSlot(PawnObject)];
         const bool cacheMiss = (c.pawn != PawnObject);
         if (cacheMiss) {
@@ -3643,7 +3577,6 @@ static inline uint64_t ESPPhaseNowUS(void) {
             c.isPvsVis = false;
             c.visGoodFrames = 0;
         } else if ((g_cacheFrameCounter & 7) == 0) {
-            // Bot bit rarely changes — refresh occasionally.
             c.isBot = get_IsBot(PawnObject);
         }
         c.isKnocked = get_IsKnockedDown(PawnObject);
@@ -3669,9 +3602,6 @@ static inline uint64_t ESPPhaseNowUS(void) {
         bool isTrueVis = c.isTrueVis;
         (void)isCamVis; (void)isTrueVis;
 
-        // ---- Ghost ESP filter (do not invent alive players) ----
-        // Sticky death: once fully dead/unreadable, suppress longer so free-list
-        // dict entries + sticky PosTrack cannot reappear as floating ESP/aim.
         static uint64_t s_deadPawn[96] = {};
         static int s_deadUntilFrame[96] = {};
         const int deadSlot = (int)(PawnObject % 96ull);
@@ -3679,13 +3609,9 @@ static inline uint64_t ESPPhaseNowUS(void) {
             continue;
         }
         auto markGhostDead = [&](int holdFrames) {
-            // Tombstone inside PosTrack by exact pawn (not just %96 bucket).
-            // This prevents the same pawn (or a colliding %96 occupant) from reviving
-            // smoothing/track state for a hold window even if dict still yields the pointer.
             PosTrack &trDead = g_posTrack[PosTrackSlot(PawnObject)];
             trDead.pawn = PawnObject;
             trDead.deadUntilFrame = g_cacheFrameCounter + holdFrames;
-            // Clear smoothing/velocity but keep tombstone + identity flags
             trDead.headSmoothed = trDead.hipSmoothed = Vector3{};
             trDead.lastHeadRaw = trDead.lastHipRaw = Vector3{};
             trDead.headVel = trDead.hipVel = Vector3{};
@@ -3694,16 +3620,14 @@ static inline uint64_t ESPPhaseNowUS(void) {
             trDead.headSrcHold = trDead.hipSrcHold = 0;
             trDead.hasHead = trDead.hasHip = false;
             trDead.frame = g_cacheFrameCounter;
-            trDead.bodyLenHold = 0; // force re-learn after death window
+            trDead.bodyLenHold = 0;
             s_deadPawn[deadSlot] = PawnObject;
             s_deadUntilFrame[deadSlot] = g_cacheFrameCounter + holdFrames;
             if (gAimLockTarget == PawnObject) {
                 gAimLockTarget = 0;
                 gAimLockLostFrames = 0;
             }
-            // Drop any lingering box smoothing state for this pawn (prevents stale size bleed to a new occupant).
             ClearBoxScreenForPawn(PawnObject);
-            // Also clear Pro box smoother (used by isESP path).
             ClearProBoxScreenForPawn(PawnObject);
         };
 
@@ -3711,7 +3635,6 @@ static inline uint64_t ESPPhaseNowUS(void) {
         Vector3 liveHip  = getPositionExt(getHip(PawnObject));
         const bool hasLiveBone = looksLikeWorldPos(liveHead) || looksLikeWorldPos(liveHip);
 
-        // Fallback HP if DataPool reads fail/delay but 3D bones exist
         if (hasLiveBone) {
             if (CurHP <= 0 && MaxHP <= 0) {
                 CurHP = 200;
@@ -3722,16 +3645,14 @@ static inline uint64_t ESPPhaseNowUS(void) {
             }
         }
 
-        // Alive/knocked always have MaxHP > 0.
         const bool hpUnreadable = (CurHP == 0 && MaxHP == 0);
         const bool hpGarbage = (MaxHP < 0 || MaxHP > 2000 || CurHP > 2000 ||
                                 (MaxHP > 0 && CurHP > MaxHP + 50));
         const bool fullyDead = (!hasLiveBone && !hpUnreadable && CurHP <= 0);
         if (!hasLiveBone && (hpGarbage || hpUnreadable || fullyDead || MaxHP <= 0)) {
-            markGhostDead((fullyDead || hpUnreadable || MaxHP <= 0) ? 120 : 45); // longer hold for death
+            markGhostDead((fullyDead || hpUnreadable || MaxHP <= 0) ? 120 : 45);
             continue;
         }
-        // Despawned/spectator shells often keep a free-list pointer with no identity.
         {
             uint64_t uid = ReadAddr<uint64_t>(PawnObject + kUserID);
             COW_GamePlay_PlayerID_o pid = ReadAddr<COW_GamePlay_PlayerID_o>(PawnObject + kPlayerID);
@@ -3741,11 +3662,6 @@ static inline uint64_t ESPPhaseNowUS(void) {
             }
         }
 
-        // Use frozen frame matrix only (refreshViewMatrix is a no-op).
-
-        // ---------------------------------------------------------------------
-        // ESP MUST use the SAME head aim uses when possible.
-        // ---------------------------------------------------------------------
         Vector3 liveRoot = ReadPlayerRootTransform(PawnObject);
 
         Vector3 mountPos{};
@@ -3762,7 +3678,6 @@ static inline uint64_t ESPPhaseNowUS(void) {
         }
         const bool haveMountPos = looksLikeWorldPos(mountPos);
 
-        // Body shape: seat-collapse only meaningful WITH a real vehicle/mount signal.
         float liveBodyLen = 0.f;
         bool haveLiveBody = false;
         if (looksLikeWorldPos(liveHead) && looksLikeWorldPos(liveHip)) {
@@ -3770,10 +3685,8 @@ static inline uint64_t ESPPhaseNowUS(void) {
             haveLiveBody = true;
         }
         const bool bodyCollapsed = haveLiveBody && liveBodyLen < 0.35f;
-        // CRITICAL: bodyCollapsed alone is NOT vehicle — dead shells often collapse.
         const bool treatAsVehicle = enemyMounted || haveMountPos;
 
-        // No live skeleton AND no mount → despawned ghost (dict still holds pointer).
         const bool anyLiveAnchor =
             looksLikeWorldPos(liveHead) || looksLikeWorldPos(liveHip) ||
             looksLikeWorldPos(liveRoot) || haveMountPos;
@@ -3781,9 +3694,6 @@ static inline uint64_t ESPPhaseNowUS(void) {
             markGhostDead(60);
             continue;
         }
-        // Standing ghost: collapsed body without vehicle → skip (was ESP/aim on empty).
-        // Be robust to isKnocked lag: only treat as ghost when we have clear evidence they
-        // should be standing tall (root-to-head height looks upright) and bones are collapsed.
         if (!treatAsVehicle && bodyCollapsed) {
             bool expectStanding = !isKnocked;
             bool rootSaysUpright = false;
@@ -3795,9 +3705,7 @@ static inline uint64_t ESPPhaseNowUS(void) {
                 markGhostDead(45);
                 continue;
             }
-            // If root indicates low profile (knocked/prone) or isKnocked true, allow collapsed.
         }
-        // Bones both missing while not mounted → shell / spectator leftover.
         if (!treatAsVehicle && !looksLikeWorldPos(liveHead) && !looksLikeWorldPos(liveHip) &&
             !looksLikeWorldPos(liveRoot)) {
             markGhostDead(60);
@@ -3806,7 +3714,6 @@ static inline uint64_t ESPPhaseNowUS(void) {
 
         Vector3 headBonePos{};
         bool headFromLive = false;
-        // 1) Live head first — same as aim path.
         if (looksLikeWorldPos(liveHead)) {
             headBonePos = liveHead;
             headFromLive = true;
@@ -3822,17 +3729,14 @@ static inline uint64_t ESPPhaseNowUS(void) {
             headBonePos.y += 0.55f;
             headFromLive = true;
         }
-        // No ResolveHeadWorldPosTracked fallback here — sticky track invents ghosts.
         if (!headFromLive || IsZeroVec(headBonePos) || !looksLikeWorldPos(headBonePos)) {
             markGhostDead(45);
             continue;
         }
-        // Reject world-origin / near-zero anchors (classic ghost after death).
         if (fabsf(headBonePos.x) < 0.5f && fabsf(headBonePos.z) < 0.5f && fabsf(headBonePos.y) < 2.0f) {
             markGhostDead(45);
             continue;
         }
-        // Reject head lagging impossibly far from root (stale free-list transform).
         if (looksLikeWorldPos(liveRoot)) {
             float dx = headBonePos.x - liveRoot.x;
             float dz = headBonePos.z - liveRoot.z;
@@ -3843,10 +3747,8 @@ static inline uint64_t ESPPhaseNowUS(void) {
             }
         }
 
-        // ESP hip under head (for box height). Prefer live hip if sane column.
-        // Compute source ids so we can detect flips (head/hip/root/mount) and avoid pumping.
-        int headSrcNow = 0; // 1=liveHead, 2=mount, 3=root, 4=liveHip
-        int hipSrcNow  = 0; // 2=liveHip, 3=root, 4=synth-from-head
+        int headSrcNow = 0;
+        int hipSrcNow  = 0;
         Vector3 espHipPos{};
         if (looksLikeWorldPos(liveHip) &&
             Vector3::Distance(headBonePos, liveHip) >= 0.28f &&
@@ -3865,9 +3767,6 @@ static inline uint64_t ESPPhaseNowUS(void) {
             else headSrcNow = 4;
         }
 
-        // World-space EMA on validated live positions only — kills bone micro-jitter
-        // without inventing ghosts (markGhostDead already filtered dead shells).
-        // If source flipped this frame, bypass smoothing to stop a stretch that box smoother can't hide.
         PosTrack &trDisp = g_posTrack[PosTrackSlot(PawnObject)];
         const bool headSrcFlip = (trDisp.lastHeadSrcDisp != 0 && headSrcNow != 0 && trDisp.lastHeadSrcDisp != headSrcNow);
         const bool hipSrcFlip  = (trDisp.lastHipSrcDisp  != 0 && hipSrcNow  != 0 && trDisp.lastHipSrcDisp  != hipSrcNow);
@@ -3882,13 +3781,10 @@ static inline uint64_t ESPPhaseNowUS(void) {
         trDisp.lastHeadSrcDisp = headSrcNow ? headSrcNow : trDisp.lastHeadSrcDisp;
         trDisp.lastHipSrcDisp  = hipSrcNow  ? hipSrcNow  : trDisp.lastHipSrcDisp;
 
-        // Keep hip under smoothed head as a sane body column (no inverted boxes).
-        // Use learned stable body length when available to stop size oscillation on stationary pose.
         {
             float bodyLen = Vector3::Distance(headBonePos, espHipPos);
             float dy = headBonePos.y - espHipPos.y;
 
-            // Learn/refresh canonical body length from good live pairs.
             if (looksLikeWorldPos(liveHead) && looksLikeWorldPos(liveHip)) {
                 float liveBL = Vector3::Distance(liveHead, liveHip);
                 if (liveBL >= 0.45f && liveBL <= 1.25f) {
@@ -3928,18 +3824,12 @@ static inline uint64_t ESPPhaseNowUS(void) {
             }
         }
 
-        // Always use real local↔enemy distance when we have a local world anchor.
         float tempDisForAim = useLocalDistance
             ? Vector3::Distance(myLocation, headBonePos)
             : 0.0f;
-        // On vehicle distance can be noisy; only skip clearly insane ranges.
-        // Min-distance cull skipped for vehicle/collapsed (passenger next to you).
         if (useLocalDistance && tempDisForAim > maxPossibleDistance) continue;
         if (useLocalDistance && !treatAsVehicle && tempDisForAim < 0.35f) continue;
 
-        // Aimbot + Aim Assist + Silent all honor AimPos (Head/Neck/Chest-Body).
-        // Prefer GetAimTargetPosMode / ResolveSilentAimWorldPos (live).
-        // Ghost: never aim if HP shell is dead (already filtered) or bone not live.
         Vector3 aimPos = headBonePos;
         bool canAimThisPawn = false;
         if (isAimbot || useAssist || useSilent) {
@@ -3950,8 +3840,6 @@ static inline uint64_t ESPPhaseNowUS(void) {
                 bone = ResolveSilentAimWorldPos(PawnObject, aimPosition);
             }
             if (IsZeroVec(bone) || !looksLikeWorldPos(bone)) bone = headBonePos;
-            // Reject aim bone far from our live head (track invent / wrong pawn).
-            // Body is lower on torso — allow a bit more distance than pure head.
             const float maxBoneDist = (treatAsVehicle ? 3.5f : 2.6f);
             if (!IsZeroVec(bone) && looksLikeWorldPos(bone) &&
                 Vector3::Distance(bone, headBonePos) < maxBoneDist) {
@@ -3967,22 +3855,13 @@ static inline uint64_t ESPPhaseNowUS(void) {
             ? Vector3::Distance(myLocation, IsZeroVec(aimPos) ? headBonePos : aimPos)
             : tempDisForAim;
 
-        // Count enemies for ESP number only:
-        // - not self / not teammate (already skipped)
-        // - alive (CurHP > 0) — knocked still counts as a person
-        // - within ESP distance
-        // - dedup by pawn
-        // - bots only if EspBot PREF is on (not the forced isEspBot from AimOnBot)
-        // Count: real players only by default; bots only if EspBot switch is ON in prefs
-        // (not the temporary isEspBot forced by AimOnBot — that inflated count by +bots).
-        // EspBot pref once per frame (not every pawn — was re-reading defaults 100×).
         static bool s_espBotPref = false;
         static int s_espBotFrame = -1;
         if (s_espBotFrame != g_cacheFrameCounter) {
             s_espBotFrame = g_cacheFrameCounter;
             s_espBotPref = ESPPrefsBool(@"EspBot", NO);
         }
-              bool shouldCountEnemy = true;
+        bool shouldCountEnemy = true;
         if (isBot && !s_espBotPref) shouldCountEnemy = false;
         if (CurHP <= 0) shouldCountEnemy = false;
         float countLimit = fmaxf(espDistanceLimit, 1.0f);
@@ -4009,12 +3888,9 @@ static inline uint64_t ESPPhaseNowUS(void) {
             }
         }
 
-        // Check Visible: Camera bit OR vehicle passenger — always draw people in cars.
         const bool mounted = treatAsVehicle;
         bool espVisible = !isEspCheckVisible || isFPP || isCamVis || isKnocked || mounted;
 
-        // Phase-1: store world-space snapshot only. W2S + draw happen AFTER a fresh
-        // view matrix sample so overlay tracks cam (no "stick then snap").
         bool wantDraw = false;
         if ((isESP || isESP2) && (espVisible || (isBot && isEspBot) || mounted)) {
             if (!(isBot && !isEspBot && !mounted)) {
@@ -4025,7 +3901,6 @@ static inline uint64_t ESPPhaseNowUS(void) {
             }
         }
 
-        // Belt-and-suspenders: never emit a dead shell into the snapshot (CurHP<=0 is terminal).
         if (CurHP <= 0) continue;
 
         if (snapN < 128) {
@@ -4051,12 +3926,7 @@ static inline uint64_t ESPPhaseNowUS(void) {
               (unsigned long long)match, (unsigned long long)playerDict, slotCap, snapN, stats.realCount, stats.botCount);
     }
 
-    // -------------------------------------------------------------------------
-    // Phase-2: sample view matrix as late as possible (after all world reads),
-    // then project + draw ESP + pick aim. One matrix for the whole project pass.
-    // -------------------------------------------------------------------------
     if (!GetViewMatrixInto(camera, matrixData)) {
-        // Paths allocated above — free before early out (matrix unavailable this frame).
         CGPathRelease(aNumBGPath);
         CGPathRelease(aNumGPath);
         CGPathRelease(aNumOPath);
@@ -4067,13 +3937,9 @@ static inline uint64_t ESPPhaseNowUS(void) {
         }
         return stats;
     }
-    // Crowded-match LOD: when many enemies, skip heavy Pro extras for far targets.
-    // Keeps Lite/Pro box lock smooth under 30+ players.
     const int crowdN = snapN;
     const bool crowded = crowdN >= 18;
     const bool veryCrowded = crowdN >= 28;
-    // Re-sample matrix once more right before project when many targets — collect
-    // pass can take several ms and cam has already moved (stick-then-snap feel).
     if (crowded) {
         float matrixRefresh[16];
         if (GetViewMatrixInto(camera, matrixRefresh)) {
@@ -4081,7 +3947,13 @@ static inline uint64_t ESPPhaseNowUS(void) {
         }
     }
 
-    // Draw pass (Lite + Pro) with the fresh matrix.
+    // ============================================================
+    //  DRAW PASS — phần này ở Trang 7/9
+    // ============================================================
+
+        // ============================================================
+    //  DRAW PASS (Lite + Pro) với matrix vừa sample.
+    // ============================================================
     for (int si = 0; si < snapN; si++) {
         const EspPawnSnap &s = snaps[si];
         if (!s.wantDraw || !isVaildPtr(s.pawn)) continue;
@@ -4090,14 +3962,6 @@ static inline uint64_t ESPPhaseNowUS(void) {
         Vector3 w2sAimCheck = WorldToScreenLayer(aimW, matrixData, (float)matrixVpWidth, (float)matrixVpHeight, (float)viewWidth, (float)viewHeight);
         bool isOnScreen = (w2sAimCheck.z > 0.001f && w2sAimCheck.x >= 0 && w2sAimCheck.x <= viewWidth && w2sAimCheck.y >= 0 && w2sAimCheck.y <= viewHeight);
 
-        // [PUSH] 1 Hz on the first drawn snap: splits "frozen data" from
-        // "frozen hand-off". w2sAimCheck is already computed for this pawn and
-        // is the SAME world point the ESP box is built around, so this costs
-        // nothing extra. Read the decision table in the commit message:
-        //   world moves + scr moves          -> data & projection alive
-        //   world moves + scr frozen         -> projection stuck (GetViewMatrixInto)
-        //   world frozen                     -> bone/node offset wrong (kHeadNode family)
-        // Compare [PUSH] scr against [SB-PUSH] p0 to see if the push survived.
         if (si == 0) {
             static int s_pushLog = 0;
             if (++s_pushLog % 60 == 1) {
@@ -4105,32 +3969,12 @@ static inline uint64_t ESPPhaseNowUS(void) {
                 uint64_t hp = ReadAddr<uint64_t>(s.pawn + kHipNode);
                 uint64_t h628 = ReadAddr<uint64_t>(s.pawn + 0x628);
 
-                // Cache versus no-cache, same frame, same address. Walks the
-                // same chain getPositionExt walks and lands on the same
-                // Vector3, then reads those 12 bytes twice: once through the
-                // page cache, once through ds_read_uncached, which maps the page
-                // from scratch and cannot be the reason a value looks frozen.
-                //
-                // This settles a question the TTL could not. The device log has
-                // world constant for 19 seconds while evicts and remaps run at
-                // 25/s, so the page really is being replaced and the number
-                // still does not move. Either the cache is handing back bytes
-                // the game has already changed, or the game genuinely has that
-                // value and the fault is in the offset rather than the cache.
-                // agree  -> cache innocent, the constant is the game's data
-                // differ -> cache lying, and the TTL is not reaching the page
                 uint64_t posVA = 0;
                 Vector3 fresh{};
                 Vector3 rawCached{};
                 bool haveFresh = false;
                 bool haveRaw = false;
                 {
-                    // Start from exactly the object getPositionExt was handed.
-                    // Reading pawn + kHeadNode directly and then adding
-                    // kTransformInner guesses the branch, and getBoneTrans has
-                    // three: it returns the node, node+0x10, or one level
-                    // deeper. Guessing left posVA=0 on every line, so ok=0 and
-                    // differs=0 said nothing at all.
                     uint64_t node = getHead(s.pawn);
                     uint64_t tObj = isVaildPtr((uintptr_t)node)
                                   ? ReadAddr<uint64_t>(node + kTransformInner) : 0;
@@ -4142,14 +3986,6 @@ static inline uint64_t ESPPhaseNowUS(void) {
                                    ? ReadAddr<uint64_t>(mtx + kMatrixList) : 0;
                     if (isVaildPtr((uintptr_t)mlist) && idxU <= 8192) {
                         posVA = mlist + sizeof(TMatrix) * (size_t)idxU;
-                        // Same twelve bytes, two paths. raw goes through the page
-                        // cache, fresh maps the page from scratch. Comparing
-                        // these two isolates the cache and nothing else.
-                        //
-                        // Note it must NOT be compared against s.head: that is
-                        // the position after the whole parent transform chain has
-                        // been folded in, while this is the raw matrix entry. They
-                        // are different quantities and are not expected to match.
                         rawCached = ReadAddr<Vector3>(posVA);
                         haveRaw = true;
                         haveFresh = ds_read_uncached(posVA, &fresh, sizeof(Vector3));
@@ -4175,7 +4011,6 @@ static inline uint64_t ESPPhaseNowUS(void) {
             }
         }
 
-        // Alert only nearer off-screen threats; throttle harder when crowded.
         const float alertMaxDis = veryCrowded ? 70.f : (crowded ? 95.f : 120.f);
         if ((isAlert360 || isAlertNum) && !isOnScreen && s.dis < alertMaxDis) {
             float viewX = aimW.x * matrixData[0] + aimW.y * matrixData[4] + aimW.z * matrixData[8] + matrixData[12];
@@ -4247,7 +4082,6 @@ static inline uint64_t ESPPhaseNowUS(void) {
             Vector3 HeadPos = s.head;
             if (IsZeroVec(HeadPos) || !looksLikeWorldPos(HeadPos)) continue;
             Vector3 HipPos = s.hip;
-            // Reject detached / inverted hips — bad bones make giant boxes.
             {
                 const float bodyLen = (IsZeroVec(HipPos) || !looksLikeWorldPos(HipPos))
                     ? 0.f : Vector3::Distance(HeadPos, HipPos);
@@ -4261,17 +4095,15 @@ static inline uint64_t ESPPhaseNowUS(void) {
                     HipPos.y -= s.treatAsVehicle ? 1.00f : 0.88f;
                 }
             }
-            // Synthetic feet under hip (world) — stable height, not swinging ankles.
             Vector3 FootPos = HipPos;
             FootPos.y -= s.treatAsVehicle ? 0.55f : 0.92f;
-            HeadPos.y += 0.08f; // helmet pad in world, not screen inflate
+            HeadPos.y += 0.08f;
             Vector3 w2sHead = WorldToScreenLayer(HeadPos, matrixData, (float)matrixVpWidth, (float)matrixVpHeight, (float)viewWidth, (float)viewHeight);
             Vector3 w2sHip = WorldToScreenLayer(HipPos, matrixData, (float)matrixVpWidth, (float)matrixVpHeight, (float)viewWidth, (float)viewHeight);
             Vector3 w2sFoot = WorldToScreenLayer(FootPos, matrixData, (float)matrixVpWidth, (float)matrixVpHeight, (float)viewWidth, (float)viewHeight);
             const float ep = viewWidth * 0.35f;
             if (w2sHead.z > 0.001f) {
                 float topY = w2sHead.y;
-                // Prefer foot/hip column; never use live ankle (pump while walking).
                 float bottomY = topY;
                 bool haveBot = false;
                 if (w2sFoot.z > 0.001f) { bottomY = w2sFoot.y; haveBot = true; }
@@ -4283,18 +4115,16 @@ static inline uint64_t ESPPhaseNowUS(void) {
                 if (!haveBot) bottomY = topY + fmaxf(viewHeight * 0.055f, 20.f);
                 if (bottomY < topY + 6.0f) bottomY = topY + fmaxf(viewHeight * 0.055f, 20.f);
 
-                // Body-ratio lock: head→hip is ~half body; scale to full height.
                 float hipH = (w2sHip.z > 0.001f) ? fabsf(w2sHip.y - w2sHead.y) : 0.f;
                 float ratioH = (hipH > 3.f)
                     ? (s.treatAsVehicle ? hipH * 1.48f : hipH * 2.02f)
                     : 0.f;
                 float rawH = bottomY - topY;
                 float boxHeight = (ratioH > 4.f) ? ratioH : rawH;
-                // Soft blend raw foot if close to ratio (not a spike).
                 if (ratioH > 4.f && rawH > 4.f) {
                     float rel = fabsf(rawH - ratioH) / ratioH;
                     if (rel < 0.18f) boxHeight = ratioH * 0.65f + rawH * 0.35f;
-                    else boxHeight = ratioH; // reject foot spike
+                    else boxHeight = ratioH;
                 }
                 float maxH = fminf(
                     (hipH > 3.f) ? (s.treatAsVehicle ? hipH * 1.70f : hipH * 2.25f)
@@ -4303,14 +4133,11 @@ static inline uint64_t ESPPhaseNowUS(void) {
                 if (boxHeight > maxH) boxHeight = maxH;
                 if (boxHeight < (s.treatAsVehicle ? 14.0f : 7.0f))
                     boxHeight = s.treatAsVehicle ? fmaxf(14.0f, viewHeight * 0.04f) : 7.0f;
-                // Aspect hugs torso (was fat 0.38–0.48).
                 float boxWidth = fmaxf(4.5f, boxHeight * (s.treatAsVehicle ? 0.48f : 0.34f));
-                // Center sticks to hip (body column), slight head blend.
                 float centerX = (w2sHip.z > 0.001f)
                     ? (w2sHip.x * 0.82f + w2sHead.x * 0.18f)
                     : w2sHead.x;
 
-                // Screen sticky lock — stops to/nhỏ thất thường + bám người.
                 SmoothBoxScreen(s.pawn, topY, centerX, boxHeight, boxWidth);
 
                 float padY = fmaxf(boxHeight * 0.015f, 0.8f);
@@ -4337,16 +4164,6 @@ static inline uint64_t ESPPhaseNowUS(void) {
                         buffers->snaplineDirty = YES;
                     }
                     CGPathAddRect(currentBoxPath, NULL, CGRectMake(boxX, boxY, boxWidth, boxHeight));
-                    // Snapline stays a real slanted line, one per player.
-                    //
-                    // It was briefly redrawn as two rectangles to save a remote
-                    // call, and that was a bad trade. Every horizontal segment
-                    // starts at the same screen centre, so with two or more
-                    // players on screen the segments overlap and the farther one
-                    // hides the nearer one, which reads as a single line
-                    // pointing at one player. The elbow is cheaper and wrong.
-                    // A polyline per player is one remote call and gives the
-                    // fan the reference actually shows.
                     CGPathMoveToPoint(currentLinePath, NULL, screenCenter.x, 45.0f);
                     CGPathAddLineToPoint(currentLinePath, NULL, centerX, boxY);
 
@@ -4370,9 +4187,7 @@ static inline uint64_t ESPPhaseNowUS(void) {
                 }
             }
         } else if (isESP) {
-            // CurHP<=0 is terminal; ignore lagged isKnocked (corpse/transition ghost).
             if (s.curHP <= 0) continue;
-            // Crowded Pro: far off-screen enemies skip full Pro path (still counted/alerted).
             if (crowded && !isOnScreen && s.dis > (veryCrowded ? 80.f : 120.f)) {
                 continue;
             }
@@ -4391,7 +4206,9 @@ static inline uint64_t ESPPhaseNowUS(void) {
         }
     }
 
-    // Aim target pick on the same fresh matrix as ESP.
+    // ============================================================
+    //  AIM TARGET PICK
+    // ============================================================
     const bool allowThroughWall = AimThroughAnyCoverNow();
     if (iAmAlive && useAim) {
         for (int si = 0; si < snapN; si++) {
@@ -4407,7 +4224,6 @@ static inline uint64_t ESPPhaseNowUS(void) {
 
             Vector3 w2sAim = WorldToScreenLayer(aimPos, matrixData, (float)matrixVpWidth, (float)matrixVpHeight, (float)viewWidth, (float)viewHeight);
             BOOL canConsiderForAim = YES;
-            // CurHP<=0 is terminal; do not aim ghosts even if isKnocked lags.
             if (CurHP <= 0) canConsiderForAim = NO;
             if (isAimIgnoreKnock && isKnocked) canConsiderForAim = NO;
             if (isAimIgnoreBot && isBot) canConsiderForAim = NO;
@@ -4455,9 +4271,15 @@ static inline uint64_t ESPPhaseNowUS(void) {
                 } else if (isAimbot) {
                     float fovSq = aimFovSq > 1.f ? aimFovSq : (150.f * 150.f);
                     inRange = inFront && (distSq <= fovSq);
-                } else if (useAssistOnly || useSilent || silentSphereOnly) {
-                    float rSq = fmaxf(assistRadiusSq, aimFovSq > 1.f ? aimFovSq : (150.f * 150.f));
-                    inRange = inFront && (distSq <= rSq);
+                // ============================================================
+                // [SILENT-FIX] Silent dùng FOV thay vì assistRadius.
+                // Trước: silent dùng assistRadiusSq → chỉ dính khi ở gần.
+                // ============================================================
+                } else if (useSilent || silentSphereOnly) {
+                    float fovSq = aimFovSq > 1.f ? aimFovSq : (150.f * 150.f);
+                    inRange = inFront && (distSq <= fovSq);
+                } else if (useAssistOnly) {
+                    inRange = inFront && (distSq <= assistRadiusSq);
                 }
             } else if (useSilent || (isAimbot && useAim360) || silentSphereOnly) {
                 inRange = true;
@@ -4517,7 +4339,6 @@ static inline uint64_t ESPPhaseNowUS(void) {
             if (PawnObject == gAimLockTarget) score *= 0.18f;
             if (isBot && !isAimIgnoreBot) score *= 0.92f;
 
-            // Always pick with AimPos bone (aimPos already mode-aware for silent/aimbot/assist).
             Vector3 pickHead = aimPos;
             if (allowThroughWall) {
                 if (score < bestAnyScore) {
@@ -4545,16 +4366,7 @@ static inline uint64_t ESPPhaseNowUS(void) {
         }
     }
 
-    // allowThroughWall already sampled above (aim pick + sticky resolve share it).
-
-    // -------------------------------------------------------------------------
     // Drop stale locks for pawns that left this frame's processed set.
-    // If an enemy we were aiming/silently targeting walked out of ESP/aim range
-    // (or despawned), it will no longer appear in snaps[]. Carrying the lock
-    // causes per-frame re-validation reads + possible thread work on a pawn
-    // that is no longer "hot", which manifests as treo/hitch exactly when the
-    // target "ra khỏi tầm esp".
-    // -------------------------------------------------------------------------
     if (gAimLockTarget != 0) {
         bool stillInFrame = false;
         for (int si = 0; si < snapN; si++) {
@@ -4576,8 +4388,6 @@ static inline uint64_t ESPPhaseNowUS(void) {
         }
     }
 
-    // Also drop s_lastAimPawn (used for fire-stick "keep look while dragging" assist)
-    // if its pawn left the processed set this frame.
     if (s_lastAimPawn != 0) {
         bool stillInFrame = false;
         for (int si = 0; si < snapN; si++) {
@@ -4588,16 +4398,12 @@ static inline uint64_t ESPPhaseNowUS(void) {
         }
     }
 
-    // Raw "best this frame" before sticky hysteresis.
     uint64_t rawBestTarget = 0;
     Vector3 rawBestHead{};
     float rawBestDist = FLT_MAX;
     float rawBestScore = FLT_MAX;
     bool rawBestVis = false;
 
-    // Resolve best target.
-    // Wall-ON: FOV/sphere candidates (bestAny).
-    // Wall-OFF: game-clear LOS candidates preferred, fallback to on-screen FOV candidates.
     if (!allowThroughWall) {
         if (bestLosTarget != 0) {
             rawBestTarget = bestLosTarget;
@@ -4620,9 +4426,7 @@ static inline uint64_t ESPPhaseNowUS(void) {
         rawBestVis = bestAnyVis;
     }
 
-    // ---- Sticky target hysteresis (cluster fix) ----
-    // If we already lock A and B is only slightly "better", keep A.
-    // Switch only when challenger is clearly better, or lock is dead/out of range.
+    // Sticky target hysteresis
     bestTarget = rawBestTarget;
     bestHeadPos = rawBestHead;
     bestDistance = rawBestDist;
@@ -4630,19 +4434,15 @@ static inline uint64_t ESPPhaseNowUS(void) {
     isVis = rawBestVis;
 
     static float s_lockScore = FLT_MAX; (void)s_lockScore;
-    // s_lockHoldFrames declared at file scope (above) to allow cleanup on treo fix
-    // reuse it here without redeclaring static
     const bool firingNow = isVaildPtr(myPawnObject) && get_IsFiring(myPawnObject);
 
     if (gAimLockTarget != 0 && isVaildPtr(gAimLockTarget)) {
-        // Find locked pawn's score among this frame's candidates (recompute lightly).
         float lockedScore = FLT_MAX;
         Vector3 lockedHead{};
         float lockedDist = FLT_MAX;
         bool lockedFound = false;
         bool lockedLos = false;
-        // Prefer already-picked buckets if lock is the raw winner.
-        // Wall-off: still re-validate live LOS so sticky cannot keep a covered target.
+
         if (rawBestTarget == gAimLockTarget) {
             Vector3 lb = rawBestHead;
             if (IsZeroVec(lb) || !looksLikeWorldPos(lb)) {
@@ -4674,17 +4474,10 @@ static inline uint64_t ESPPhaseNowUS(void) {
                 lockedLos = true;
             }
         } else if (bestAnyTarget == gAimLockTarget) {
-            // Wall-ON FOV set only. Wall-off never uses bestAny without LOS.
-            if (allowThroughWall) {
-                lockedFound = false; // re-score live below
-            } else {
-                lockedFound = false;
-            }
+            lockedFound = false;
         }
 
         if (!lockedFound) {
-            // Live re-eval of locked pawn (still in match dict).
-            // Ghost: require MaxHP>0 + live bone — never sticky-track invent.
             int lhp = get_CurHP(gAimLockTarget);
             int lmax = get_MaxHP(gAimLockTarget);
             const bool lknock = get_IsKnockedDown(gAimLockTarget);
@@ -4714,7 +4507,10 @@ static inline uint64_t ESPPhaseNowUS(void) {
                             if (isAimbot && useAim180) inR = inF;
                             else if (isAimbot) {
                                 float fovSq = aimFovSq > 1.f ? aimFovSq : (150.f * 150.f);
-                                // Wide while locked (stick/drag).
+                                inR = inF && (dsq <= fovSq * 2.25f);
+                            // [SILENT-FIX] Silent sticky dùng FOV.
+                            } else if (useSilent || silentSphereOnly) {
+                                float fovSq = aimFovSq > 1.f ? aimFovSq : (150.f * 150.f);
                                 inR = inF && (dsq <= fovSq * 2.25f);
                             } else {
                                 inR = inF && (dsq <= assistRadiusSq * 1.5f);
@@ -4726,24 +4522,24 @@ static inline uint64_t ESPPhaseNowUS(void) {
                         } else if (isAimbot) {
                             float fovSq = aimFovSq > 1.f ? aimFovSq : (150.f * 150.f);
                             inR = inF && (dsq <= fovSq * 2.25f);
+                        } else if (useSilent || silentSphereOnly) {
+                            float fovSq = aimFovSq > 1.f ? aimFovSq : (150.f * 150.f);
+                            inR = inF && (dsq <= fovSq * 2.25f);
                         } else {
                             inR = inF && (dsq <= assistRadiusSq * 1.5f);
                         }
                         if (inR) {
-                            // Wall/ice-off: FOV alone is NOT enough. Re-check real LOS every
-                            // sticky re-eval. Old AimHasPositiveLos() always returned true →
-                            // kept locking targets behind bom keo after toggle OFF.
                             const bool liveLos = allowThroughWall
                                 ? true
                                 : GameClearLosToEnemy(myPawnObject, gAimLockTarget, lb);
                             if (!liveLos) {
-                                // Drop sticky candidate this frame (behind wall/bom keo).
+                                // Drop sticky candidate (behind wall/bom keo).
                             } else {
                                 float distanceNorm = ld / fmaxf(aimDistance, 1.f);
                                 float fovSq = fmaxf(aimFovSq > 1.f ? aimFovSq : (150.f * 150.f), 1.f);
                                 float rangeNorm = isAimbot ? (dsq / fovSq) : (dsq / fmaxf(assistRadiusSq, 1.f));
                                 float sc = rangeNorm * 0.85f + distanceNorm * 0.15f;
-                                sc *= 0.18f; // same lock bias
+                                sc *= 0.18f;
                                 lockedScore = sc;
                                 lockedHead = lb;
                                 lockedDist = ld;
@@ -4757,33 +4553,22 @@ static inline uint64_t ESPPhaseNowUS(void) {
         }
 
         if (lockedFound) {
-            // Keep lock unless challenger is clearly better.
-            // Firing: almost never switch (cluster + stick thrash).
-            // Idle: need ~40% better score to switch (lower is better).
             const float switchRatio = firingNow ? 0.45f : 0.62f;
             bool keepLock = true;
-            // Wall/bom-keo off: sticky must not keep a no-LOS target (e.g. ducked into ice).
             if (!allowThroughWall && !lockedLos) {
                 keepLock = false;
             } else if (rawBestTarget != 0 && rawBestTarget != gAimLockTarget) {
-                // rawBestScore already has NO lock bias on challenger.
-                // lockedScore has *0.18 bias — compare apples: use unbias approx.
                 float lockedUnbias = lockedScore / 0.18f;
                 if (rawBestScore < lockedUnbias * switchRatio) {
-                    // Challenger much better (closer to crosshair / priority).
                     keepLock = false;
                 }
             } else if (rawBestTarget == 0) {
-                // No other candidate — keep lock if still valid.
                 keepLock = true;
             }
-            // Minimum hold frames after acquire (prevents 1-frame flip-flop).
-            // Never override a hard no-LOS drop when wall/ice cover aim is off.
             if (keepLock || allowThroughWall || lockedLos) {
                 if (s_lockHoldFrames < 8) keepLock = true;
                 if (firingNow && s_lockHoldFrames < 14) keepLock = true;
             }
-            // Re-assert: wall-off + no LOS never sticky-holds (bom keo OFF).
             if (!allowThroughWall && !lockedLos) keepLock = false;
 
             if (keepLock) {
@@ -4795,7 +4580,6 @@ static inline uint64_t ESPPhaseNowUS(void) {
                 s_lockScore = lockedScore;
                 s_lockHoldFrames++;
             } else {
-                // Switch to raw best.
                 bestTarget = rawBestTarget;
                 bestHeadPos = rawBestHead;
                 bestDistance = rawBestDist;
@@ -4805,10 +4589,8 @@ static inline uint64_t ESPPhaseNowUS(void) {
                 s_lockHoldFrames = 0;
             }
         } else {
-            // Lock invalid this frame.
             gAimLockLostFrames++;
             if (gAimLockLostFrames <= kAimLockMaxLostFrames && rawBestTarget == 0) {
-                // Brief miss with no alternative — drop soft (don't invent ghost aim).
                 bestTarget = 0;
             } else {
                 bestTarget = rawBestTarget;
@@ -4829,9 +4611,6 @@ static inline uint64_t ESPPhaseNowUS(void) {
         s_lockScore = rawBestScore;
     }
 
-    // AIM DIAG: surfaces the whole aim pipeline state — attach, roster size,
-    // picked target. If aimbot "does nothing", this line says which stage is
-    // empty (0 snaps = attach/match fail; snaps>0 target=0 = filter kills all).
     {
         static CFTimeInterval s_lastAimDiag = 0;
         CFTimeInterval nowAd = CACurrentMediaTime();
@@ -4849,9 +4628,6 @@ static inline uint64_t ESPPhaseNowUS(void) {
         }
     }
 
-    // Live target validity: kill / despawn / invalid bone must hard-stop aim immediately.
-    // Ghost: MaxHP must be live; bone must be live (no sticky-track invent).
-    // Wall-off: FOV geometry + adaptive LOS (Camera when flags work).
     auto AimTargetStillValid = [&](uint64_t pawn) -> bool {
         if (!isVaildPtr(pawn)) return false;
         int hp = get_CurHP(pawn);
@@ -4866,7 +4642,6 @@ static inline uint64_t ESPPhaseNowUS(void) {
             maxHp = 200; if (hp <= 0) hp = 200;
         }
 
-        // Dead / unreadable / garbage HP shell → drop lock (no ghost aim).
         if (!hasLiveHead && (maxHp <= 0 || maxHp > 2000)) return false;
         if (!hasLiveHead && (hp == 0 && maxHp == 0)) return false;
         if (!hasLiveHead && (hp <= 0)) return false;
@@ -4887,14 +4662,12 @@ static inline uint64_t ESPPhaseNowUS(void) {
                     bone = liveRoot;
                     bone.y += 0.85f;
                 } else {
-                    return false; // no live anchor — ghost shell
+                    return false;
                 }
             }
         }
         if (IsZeroVec(bone) || !looksLikeWorldPos(bone)) return false;
-        // Near world origin = classic despawn ghost
         if (fabsf(bone.x) < 0.5f && fabsf(bone.z) < 0.5f && fabsf(bone.y) < 2.0f) return false;
-        // Collapsed standing body without mount → ghost leftover
         {
             Vector3 lh = getPositionExt(getHead(pawn));
             Vector3 lp = getPositionExt(getHip(pawn));
@@ -4905,9 +4678,7 @@ static inline uint64_t ESPPhaseNowUS(void) {
                 return false;
             }
         }
-        // Wall-off: require live game clear LOS every frame (drop when they duck behind cover).
         if (!allowThroughWall && !GameClearLosToEnemy(myPawnObject, pawn, bone)) return false;
-        // Wall-off: stay in front of camera (FOV activation), same matrix as pick.
         if (!allowThroughWall) {
             Vector3 w2s = WorldToScreenLayer(bone, matrixData, (float)matrixVpWidth, (float)matrixVpHeight,
                                             (float)viewWidth, (float)viewHeight);
@@ -4917,21 +4688,16 @@ static inline uint64_t ESPPhaseNowUS(void) {
                 w2s.y < -pad || w2s.y > viewHeight + pad) {
                 return false;
             }
-            // FOV gate while locked: much wider slack. Fire-stick drag yanks FOV off target
-            // and used to hard-drop the lock every frame (main "giật khi kéo nút bắn").
-            // Live fire check here (fireWindow not in scope yet).
             const bool stickFighting = isVaildPtr(myPawnObject) && get_IsFiring(myPawnObject);
             if (isAimbot && !useAim180 && !stickFighting) {
                 float dx = w2s.x - screenCenter.x;
                 float dy = w2s.y - screenCenter.y;
                 float fovSq = aimFovSq > 1.f ? aimFovSq : (150.f * 150.f);
-                // 50% slack: stick can pull crosshair out briefly without dropping lock.
                 if ((dx * dx + dy * dy) > fovSq * 2.25f) return false;
             }
         }
         if (iAmAlive) {
             float d = Vector3::Distance(myLocation, bone);
-            // Allow closer while mounted/passenger; only block true self-range ghosts.
             if (d < 0.15f || d > aimDistance + 5.0f) return false;
         }
         return true;
@@ -4951,14 +4717,11 @@ static inline uint64_t ESPPhaseNowUS(void) {
         gAimLockTarget = bestTarget;
         gAimLockLostFrames = 0;
     } else {
-        // Target gone/killed: never keep sticky lock.
         gAimLockTarget = 0; gAimLockLostFrames = 0;
         s_lockHoldFrames = 0;
     }
 
-    // Trigger state lives outside the "has target" branch so releasing fire/scope
-    // still hard-stops aim immediately even when target just died.
-    static uint64_t s_lastAimPawn = 0;
+    static uint64_t s_lastAimPawn2 = 0;
 
     bool rawScope = isVaildPtr(myPawnObject) ? get_IsScoping(myPawnObject) : false;
     bool rawFire  = isVaildPtr(myPawnObject) ? get_IsFiring(myPawnObject) : false;
@@ -4968,8 +4731,11 @@ static inline uint64_t ESPPhaseNowUS(void) {
     int trig = triggerMode;
     if (trig < 0) trig = 0;
     if (trig > 3) trig = 3;
-    // Camera aim activation: ONLY live fire/scope state — no "bulletJustFired" lag
-    // (that kept LookAt/thread alive after release → cam lắc / aim dính thêm 1 xíu).
+
+    // ============================================================
+    // [FIRE-FIX] shouldActivate — chỉ dựa trên rawFire/isScoping thực.
+    // get_IsFiring đã fix (loại READY) — xem cuối file.
+    // ============================================================
     bool shouldActivate = false;
     switch (trig) {
         case 1: shouldActivate = isFiring; break;                 // Fire only
@@ -4980,11 +4746,9 @@ static inline uint64_t ESPPhaseNowUS(void) {
     }
 
     if (useAssistOnly) {
-        shouldActivate = true; // Aim Assist should assist when near target without waiting for fire
+        shouldActivate = true;
     }
 
-    // Silent (AimSilent.h style): keep a locked target for a high-freq direction-rewrite
-    // thread. Camera aim (Aimbot/Assist) stays independent via LookAt.
     const bool cameraAimActive = (isAimbot || useAssist) && shouldActivate;
     const bool silentActive = useSilent && iAmAlive && isVaildPtr(myPawnObject);
 
@@ -4994,8 +4758,6 @@ static inline uint64_t ESPPhaseNowUS(void) {
               (int)isAimbot, (int)useAssist, trig, (int)isFiring, (int)isScoping, (int)shouldActivate, (unsigned long long)bestTarget);
     }
 
-    // Hard-stop camera path the instant trigger is off or no aim mode.
-    // (Prevents "nhả nút vẫn aim thêm 1 xíu" + cam lắc từ lock thread.)
     if (!cameraAimActive) {
         update_aim_assist_legit_tuning(false);
         AimLockClear();
@@ -5004,8 +4766,7 @@ static inline uint64_t ESPPhaseNowUS(void) {
         s_lastAimPawn = 0;
     }
 
-    // ---- Silent: AimPos bone dir (Head/Neck/Chest) + muzzle origin + zero scatter ----
-    // bulletJustFired ONLY for silent bullet rewrite (accuracy), NOT camera hold.
+    // ---- Silent: AimPos bone dir + muzzle origin + zero scatter ----
     static float s_lastBulletTrack = 0.f;
     float bulletTrack = 0.f;
     if (isVaildPtr(myPawnObject) && kLastPlayBulletTrackEffectTime) {
@@ -5013,19 +4774,19 @@ static inline uint64_t ESPPhaseNowUS(void) {
     }
     const bool bulletJustFired = (bulletTrack > 0.f && bulletTrack != s_lastBulletTrack);
     if (bulletTrack > 0.f) s_lastBulletTrack = bulletTrack;
-    // Camera fire window = live fire only. Silent can use bullet edge separately.
     const bool fireWindow = isFiring;
     const bool silentFireWindow = isFiring || bulletJustFired;
 
-    // Zero scatter for Silent OR Aimbot/Assist while firing — far spray was weapon bloom.
     if (isVaildPtr(myPawnObject) &&
         ((silentActive && (silentFireWindow || ((g_cacheFrameCounter & 3) == 0))) ||
          (cameraAimActive && (isFiring || isScoping)))) {
         ZeroWeaponScatterForAim(myPawnObject);
     }
 
-    // Wall-off: silent only if strict LOS; camera aimbot already gated looser + FOV.
-    // Honor AimPos — never force head when Neck/Body selected.
+    // ============================================================
+    // [SILENT-BURST-FIX] Silent target apply — tăng burst khi firing,
+    // refresh bone + origin mỗi 4 burst để viên trúng viên.
+    // ============================================================
     if (silentActive && bestTarget != 0 && AimTargetStillValid(bestTarget) &&
         (allowThroughWall || AimTargetVisibleStrictForSilent(bestTarget))) {
         Vector3 silentBone = ResolveSilentAimWorldPos(bestTarget, aimPosition);
@@ -5034,7 +4795,6 @@ static inline uint64_t ESPPhaseNowUS(void) {
             s_lastAimPawn = bestTarget;
             bestHeadPos = silentBone;
 
-            // Live AimPos bone only (no lead) — prediction was landing a head-width off.
             Vector3 liveBone = ResolveSilentAimWorldPos(bestTarget, aimPosition);
             if (IsZeroVec(liveBone)) liveBone = silentBone;
             {
@@ -5042,7 +4802,8 @@ static inline uint64_t ESPPhaseNowUS(void) {
                 g_silentTargetPos = liveBone;
                 g_silentFromLoc = myLocation;
             }
-            const int bursts = silentFireWindow ? 120 : 4;
+            // Tăng 160 burst khi firing (trước 120) — viên trúng viên.
+            const int bursts = silentFireWindow ? 160 : 6;
             for (int burst = 0; burst < bursts; burst++) {
                 if ((burst & 3) == 0) {
                     Vector3 h2 = ResolveSilentAimWorldPos(bestTarget, aimPosition);
@@ -5052,7 +4813,10 @@ static inline uint64_t ESPPhaseNowUS(void) {
                         g_silentTargetPos = liveBone;
                     }
                 }
-                AimSyncFireHit(myPawnObject, myLocation, liveBone);
+                // Origin mới mỗi burst — muzzle có thể đổi giữa burst.
+                Vector3 fromNow = AimCameraOrigin(myPawnObject, myLocation);
+                if (!looksLikeWorldPos(fromNow)) fromNow = myLocation;
+                AimSyncFireHit(myPawnObject, fromNow, liveBone);
             }
         } else {
             SilentAimClearTarget();
@@ -5064,11 +4828,8 @@ static inline uint64_t ESPPhaseNowUS(void) {
     }
 
     // ---- Camera Aimbot / Assist LookAt ----
-    // Activation = triggerMode only (Auto / Fire / Scope). Wall-off LOS already
-    // applied at target pick — do NOT re-veto with thrashy isVis here (that killed FOV aim).
     if (iAmAlive && cameraAimActive && bestTarget != 0) {
         if (!AimTargetStillValid(bestTarget)) {
-            // Dead / invalid: hard-stop cam immediately (no residual look).
             bestTarget = 0;
             gAimLockTarget = 0;
             gAimLockLostFrames = 0;
@@ -5077,12 +4838,10 @@ static inline uint64_t ESPPhaseNowUS(void) {
             AimLockClear();
             update_aim_assist_legit_tuning(false);
         } else {
-            // LookAt uses AimPos bone (Head/Neck/Chest) for FOV / 180 / 360.
             Vector3 lookBone = ResolveSilentAimWorldPos(bestTarget, aimPosition);
             if (IsZeroVec(lookBone) || !looksLikeWorldPos(lookBone))
                 lookBone = GetAimTargetPosMode(bestTarget, aimPosition, bestDistance);
             if (IsZeroVec(lookBone) || !looksLikeWorldPos(lookBone)) {
-                // Last resort only — still prefer mode-aware head drop over pure skull for body.
                 lookBone = ResolveAimHeadWorldPos(bestTarget);
                 if (!IsZeroVec(lookBone) && aimPosition > 0) {
                     lookBone.y -= (aimPosition == 1) ? 0.14f : 0.34f;
@@ -5094,16 +4853,12 @@ static inline uint64_t ESPPhaseNowUS(void) {
                 update_aim_assist_legit_tuning(false);
                 AimLockClear();
             } else {
-                // Camera mild lead; bullet path uses stronger lead in silent/fire-dir.
                 Vector3 aimPoint = AimTrackAndLeadEx(bestTarget, lookBone, bestDistance, true, /*bulletLead=*/false);
                 if (IsZeroVec(aimPoint)) aimPoint = lookBone;
 
                 bestHeadPos = aimPoint;
                 s_lastAimPawn = bestTarget;
 
-                // Geometry re-check at apply time.
-                // Aimbot FOV / wall-off: FOV circle. Aimbot 180: front only.
-                // Aim Assist: near crosshair (assist radius), same AimPos bone.
                 bool lookOk = true;
                 if (isAimbot && useAim180) {
                     Vector3 w2sLook = WorldToScreenLayer(aimPoint, matrixData, (float)matrixVpWidth, (float)matrixVpHeight, (float)viewWidth, (float)viewHeight);
@@ -5119,7 +4874,6 @@ static inline uint64_t ESPPhaseNowUS(void) {
                         lookOk = (dx * dx + dy * dy) <= fovSq * 1.10f;
                     }
                 } else if (useAssistOnly) {
-                    // Assist solo: near crosshair only. Stacked with Aimbot uses FOV/sphere above.
                     Vector3 w2sLook = WorldToScreenLayer(aimPoint, matrixData, (float)matrixVpWidth, (float)matrixVpHeight, (float)viewWidth, (float)viewHeight);
                     if (w2sLook.z <= 0.001f) {
                         lookOk = false;
@@ -5130,8 +4884,6 @@ static inline uint64_t ESPPhaseNowUS(void) {
                     }
                 }
 
-                // Fire-stick drag yanks FOV off target → old code dropped LookAt → giật.
-                // While firing/scoping with a lock, KEEP aiming (stick must not cancel aim).
                 if (!lookOk && bestTarget != 0 && (fireWindow || isScoping) &&
                     (gAimLockTarget == bestTarget || s_lastAimPawn == bestTarget)) {
                     lookOk = true;
@@ -5139,7 +4891,6 @@ static inline uint64_t ESPPhaseNowUS(void) {
 
                 bool didLook = false;
                 if (lookOk) {
-                    // Aimbot/Assist camera LookAt (FOV already gated). No flag veto.
                     Vector3 fromNow = AimCameraOrigin(myPawnObject, myLocation);
                     Vector3 glued = AimLookAtHeadLive(myPawnObject, bestTarget, aimPosition,
                                                       bestDistance, fromNow, 1, &aimPoint,
@@ -5150,23 +4901,15 @@ static inline uint64_t ESPPhaseNowUS(void) {
                     } else if (!IsZeroVec(aimPoint) && looksLikeWorldPos(aimPoint)) {
                         bestHeadPos = aimPoint;
                     }
-                    // No AimLock thread for Aimbot/Assist — it shook cam after release.
                     AimLockClear();
                     didLook = true;
                 } else {
                     AimLockClear();
                 }
-                // Fire-dir / HitObject spoof (Aimbot/Assist wall helper ONLY — not Silent).
-                // Ghost-damage fix: do NOT thrash HitObject every fire frame (was 24×/frame
-                // while isFiring → client hit VFX/HP flash without matching server bullets).
-                // Keep LookAt / FOV / AimPos / lock logic untouched; only gate spoof to real
-                // bullet edges and a tiny write count.
-                //   Wall-ON  → allow dir rewrite on real shot.
-                //   Wall-OFF → no spoof (camera LookAt still works).
+
                 if (!useSilent && fireWindow && didLook && bestTarget != 0) {
                     ZeroWeaponScatterForAim(myPawnObject);
                     Vector3 fromNow = AimCameraOrigin(myPawnObject, myLocation);
-                    // Fire-dir spoof follows AimPos (Head/Neck/Body) — do not force skull.
                     Vector3 hit = ResolveSilentAimWorldPos(bestTarget, aimPosition);
                     if (IsZeroVec(hit) || !looksLikeWorldPos(hit))
                         hit = GetAimTargetPosMode(bestTarget, aimPosition, bestDistance);
@@ -5189,7 +4932,6 @@ static inline uint64_t ESPPhaseNowUS(void) {
             }
         }
     } else {
-        // Not in camera aim branch — always kill cam lock thread.
         update_aim_assist_legit_tuning(false);
         AimLockClear();
         if (!silentActive) s_lastAimPawn = 0;
@@ -5199,7 +4941,6 @@ static inline uint64_t ESPPhaseNowUS(void) {
         }
     }
     if (!cameraAimActive || bestTarget == 0 || !(isFiring || isScoping)) {
-        // Release fire/scope or no target → stop cam override immediately.
         if (!(isFiring || isScoping) || !cameraAimActive || bestTarget == 0)
             AimLockClear();
     }
@@ -5247,7 +4988,6 @@ bool get_IsBeingRescued(uint64_t player) {
 static const int kPriVarScope = 12;
 static const int kPriVarFire  = 21;
 
-// NMCBIHOOFFF / GetStartFireState values (dump) — backup only
 enum {
     kStartFireNone = 0,
     kStartFireReady = 1,
@@ -5261,7 +5001,13 @@ enum {
     kStartFireAbilityEnd = 9,
 };
 
-// Real firing / charge. READY alone is NOT fire (would make Both ≈ Auto while ADS).
+// ============================================================
+// [FIRE-FIX] StartFireStateIsActive
+// READY (=1) KHÔNG phải đang bắn — loại ra khỏi active states.
+// Bug gốc: `startFire > 0 && startFire <= 9` khiến READY = true →
+// trigger Fire kích hoạt liên tục dù chưa bấm bắn → aimbot Fire
+// không phân biệt được lúc bắn thật.
+// ============================================================
 static inline bool StartFireStateIsActive(int state) {
     switch (state) {
         case kStartFireFire:
@@ -5279,35 +5025,25 @@ static inline bool StartFireStateIsActive(int state) {
 bool get_IsFiring(uint64_t player) {
     if (!isVaildPtr(player)) return false;
 
-    // 1) StartFireState enum (when offset is valid).
+    // 1) StartFireState enum — CHỈ active states (loại READY).
     int startFire = ReadAddr<int>(player + kIsFiring);
-    if (startFire > 0 && startFire <= 9) {
-        return true;
-    }
-    int startFireAlt = ReadAddr<int>(player + 0x1C14);
-    if (startFireAlt > 0 && startFireAlt <= 9) {
-        return true;
-    }
+    if (StartFireStateIsActive(startFire)) return true;
 
-    // 2) IsPrepareAttack — true while fire button held (hipfire + ADS fire).
-    if (ReadAddr<uint8_t>(player + kIsPrepareAttack) != 0) {
-        return true;
-    }
-    if (ReadAddr<uint8_t>(player + 0x7D8) != 0) {
-        return true;
-    }
+    int startFireAlt = ReadAddr<int>(player + 0x1C14);
+    if (StartFireStateIsActive(startFireAlt)) return true;
+
+    // 2) IsPrepareAttack — true khi đang giữ nút bắn.
+    if (ReadAddr<uint8_t>(player + kIsPrepareAttack) != 0) return true;
+    if (ReadAddr<uint8_t>(player + 0x7D8) != 0) return true;
 
     // 3) PRI fire status (var 21).
-    if (GetDataUInt16(player, kPriVarFire) != 0) {
-        return true;
-    }
+    if (GetDataUInt16(player, kPriVarFire) != 0) return true;
 
     return false;
 }
 
 bool get_IsScoping(uint64_t player) {
     if (!isVaildPtr(player)) return false;
-    // SIGHTING_ID: non-zero = ADS. Cap rejects garbage.
     int scopeState = GetDataUInt16(player, kPriVarScope);
     return (scopeState > 0 && scopeState < 100000);
 }
@@ -5321,9 +5057,8 @@ static inline uint32_t get_VisibleFlags(uint64_t player) {
 
 bool get_IsVisible(uint64_t player) {
     if (!isVaildPtr(player)) return false;
-    // Dump: ISVISIBLE_CAMERA is the primary "seen" bit used for ESP/aim LOS.
     uint32_t m_Value = get_VisibleFlags(player);
-    return (m_Value & 0x1u) != 0; // ISVISIBLE_CAMERA
+    return (m_Value & 0x1u) != 0;
 }
 
 bool get_IsVisibleByFlag(uint64_t player, uint32_t flag) {
@@ -5333,11 +5068,9 @@ bool get_IsVisibleByFlag(uint64_t player, uint32_t flag) {
 
 bool get_IsFPPVisible(uint64_t player) {
     if (!isVaildPtr(player)) return false;
-    // Used by ESP "Check Visible": require Camera (true seen), not full mask.
-    // Full 0xFFFBFFFF match is not a real LOS test (includes mode bits).
     uint32_t m_Value = get_VisibleFlags(player);
     if (m_Value == 0) return false;
-    return (m_Value & 0x1u) != 0; // ISVISIBLE_CAMERA
+    return (m_Value & 0x1u) != 0;
 }
 
 void EnableCamPC(uint64_t localPlayerPawn, bool isEnabled, float campcValue) {
