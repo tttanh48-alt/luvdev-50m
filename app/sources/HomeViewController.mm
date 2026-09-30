@@ -634,8 +634,11 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     [_triggerSegment addTarget:self action:@selector(triggerSegmentChanged:) forControlEvents:UIControlEventValueChanged];
     [_aimCard addSubview:_triggerSegment];
 
+    // ============================================================
+    // [FIX] Aim Position label — rõ rằng áp dụng cho cả Aimbot + Silent.
+    // ============================================================
     _aimPosLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-    _aimPosLabel.text = @"Aim Position";
+    _aimPosLabel.text = @"Aim Position (Aimbot + Silent)";
     _aimPosLabel.font = VNFont(17, UIFontWeightSemibold);
     _aimPosLabel.textColor = VNText();
     [_aimCard addSubview:_aimPosLabel];
@@ -894,7 +897,7 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _triggerLabel.frame = CGRectMake(20, fovAreaH + 14, 140, 24);
     _triggerSegment.frame = CGRectMake(20, fovAreaH + 46, cardW - 40, 38);
 
-    _aimPosLabel.frame = CGRectMake(20, fovAreaH + segAreaH + 14, 140, 24);
+    _aimPosLabel.frame = CGRectMake(20, fovAreaH + segAreaH + 14, 220, 24);
     _aimPosSegment.frame = CGRectMake(20, fovAreaH + segAreaH + 46, cardW - 40, 38);
     y = CGRectGetMaxY(_aimCard.frame) + 16;
 
@@ -1019,10 +1022,22 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     ESPSyncFromPrefs();
 }
 
+// ============================================================
+// [FIX] Log Silent có FOV + AimPos — dễ debug khi bật.
+// Logic gốc giữ nguyên: chỉ thêm log.
+// ============================================================
 - (void)silentAimSwitchChanged:(UISwitch *)sender {
     ESPPrefsSetBoolLive(@"AimSilent", sender.on);
     ESPSyncFromPrefs();
-    NSLog(@"[VN] AimSilent set to %d", (int)sender.on);
+    NSLog(@"[VN] AimSilent=%d (FOV=%.0f, AimPos=%d)",
+          (int)sender.on,
+          ESPPrefsFloat(@"Fov", 150.0f),
+          (int)ESPPrefsFloat(@"AimPos", 0.0f));
+    [self appendBootLog:[NSString stringWithFormat:
+        @"[VN] Silent Aim %@ (FOV %.0f, Pos %d)",
+        sender.on ? @"ON" : @"OFF",
+        ESPPrefsFloat(@"Fov", 150.0f),
+        (int)ESPPrefsFloat(@"AimPos", 0.0f)]];
 }
 
 - (void)espSwitchChanged:(UISwitch *)sender {
