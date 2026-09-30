@@ -635,7 +635,7 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     [_aimCard addSubview:_triggerSegment];
 
     // ============================================================
-    // [FIX] Aim Position label — rõ rằng áp dụng cho cả Aimbot + Silent.
+    // [SỬA 1] Aim Position — rõ rằng áp dụng cho cả Aimbot + Silent.
     // ============================================================
     _aimPosLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     _aimPosLabel.text = @"Aim Position (Aimbot + Silent)";
@@ -897,6 +897,7 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _triggerLabel.frame = CGRectMake(20, fovAreaH + 14, 140, 24);
     _triggerSegment.frame = CGRectMake(20, fovAreaH + 46, cardW - 40, 38);
 
+    // [SỬA 1] AimPos label rộng hơn cho text mới
     _aimPosLabel.frame = CGRectMake(20, fovAreaH + segAreaH + 14, 220, 24);
     _aimPosSegment.frame = CGRectMake(20, fovAreaH + segAreaH + 46, cardW - 40, 38);
     y = CGRectGetMaxY(_aimCard.frame) + 16;
@@ -1023,7 +1024,7 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
 }
 
 // ============================================================
-// [FIX] Log Silent có FOV + AimPos — dễ debug khi bật.
+// [SỬA 2] Log Silent có FOV + AimPos — dễ debug khi bật.
 // Logic gốc giữ nguyên: chỉ thêm log.
 // ============================================================
 - (void)silentAimSwitchChanged:(UISwitch *)sender {
