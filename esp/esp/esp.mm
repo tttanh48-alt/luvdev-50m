@@ -750,11 +750,6 @@ static inline bool SilentWriteAimingDir(uint64_t aimingInfo, const Vector3 &targ
     if (mag <= 0.0001f) return false;
     dir.x /= mag; dir.y /= mag; dir.z /= mag;
 
-    // ✅ FIX 4: Perfect bullet tracking
-    float dirLen = sqrtf(dir.x*dir.x + dir.y*dir.y + dir.z*dir.z);
-    if (dirLen > 0.001f) {
-        dir.x /= dirLen; dir.y /= dirLen; dir.z /= dirLen;
-    }
     WriteAddr<Vector3>(aimingInfo + kSilentDirOff, dir);
     Vector3 start2 = ReadAddr<Vector3>(aimingInfo + kSilentOriginOff);
     if (!IsZeroVec(start2)) {
@@ -770,11 +765,6 @@ static inline bool SilentWriteAimingDir(uint64_t aimingInfo, const Vector3 &targ
                 dir.x /= mag; dir.y /= mag; dir.z /= mag;
             }
         }
-    }
-    // normalize lần 2 sau khi recalc từ start2
-    float dirLen2 = sqrtf(dir.x*dir.x + dir.y*dir.y + dir.z*dir.z);
-    if (dirLen2 > 0.001f) {
-        dir.x /= dirLen2; dir.y /= dirLen2; dir.z /= dirLen2;
     }
     WriteAddr<Vector3>(aimingInfo + kSilentDirOff, dir);
     return true;
@@ -3119,7 +3109,7 @@ static inline uint64_t ESPPhaseNowUS(void) {
         ESPGeometryBuffersRelease(&buffers);
 
         CGMutablePathRef fovPath = CGPathCreateMutable();
-        // ✅ FIX 3: FOV circle for Aimbot + Silent modes + ShowFovCircle ON.
+        // FOV circle only for Aimbot FOV mode (0) + ShowFovCircle ON.
         // 180/360 hide the ring. Assist uses game crosshair (no FOV ring).
         BOOL hasFov = RenderFOVCirclePath(fovPath, viewWidth, viewHeight,
                                           isAimbot && aimSphereMode == 0 && isShowFovCircle, aimFov);
@@ -3996,8 +3986,8 @@ static inline uint64_t ESPPhaseNowUS(void) {
         if (isBot && !s_espBotPref) shouldCountEnemy = false;
         if (CurHP <= 0) shouldCountEnemy = false;
         float countLimit = fmaxf(espDistanceLimit, 1.0f);
-        bool countDisOk = (!useLocalDistance || (dis >= 0.1f && dis <= countLimit))
-                        && (dis >= 0.0f && dis <= 500.0f);
+        bool countDisOk = !useLocalDistance || (dis >= 0.1f && dis <= countLimit);
+
         if (shouldCountEnemy && countDisOk) {
             uint64_t uid = ReadAddr<uint64_t>(PawnObject + kUserID);
             uint64_t dedupKey = (uid != 0) ? uid : PawnObject;
