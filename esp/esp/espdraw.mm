@@ -68,8 +68,15 @@ BOOL RenderFOVCirclePath(
 
 void RenderTotalEnemyCount(ESPAddTextCallback textCallback, void *callbackContext, int totalCount, float layerWidth) {
     if (!textCallback || totalCount < 0) return;
-    NSString *countStr = [NSString stringWithFormat:@"%d", totalCount];
-    textCallback(callbackContext, countStr, CGRectMake((layerWidth / 2.0f) - 50.0f, 45.0f, 100.0f, 35.0f), [UIColor redColor], 26.0f, NO);
+    // Nền đen mờ để chữ nổi bật trên mọi nền game
+    textCallback(callbackContext, @"",
+        CGRectMake((layerWidth / 2.0f) - 52.0f, 43.0f, 104.0f, 39.0f),
+        [UIColor colorWithWhite:0.0f alpha:0.55f], 1.0f, NO);
+    // Chữ trắng đậm viền đen — dễ nhìn trên mọi nền
+    NSString *countStr = [NSString stringWithFormat:@"👥 %d", totalCount];
+    textCallback(callbackContext, countStr,
+        CGRectMake((layerWidth / 2.0f) - 50.0f, 45.0f, 100.0f, 35.0f),
+        [UIColor whiteColor], 22.0f, NO);
 }
 
 uint32_t CurrentWeaponID(uint64_t PawnObject) {
