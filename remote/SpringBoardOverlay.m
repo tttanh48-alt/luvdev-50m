@@ -1,8 +1,8 @@
 //
 //  SpringBoardOverlay.m — Fl0rk DrawView
 //
-//  Shape #1 (stroke): box / snapline / bone / fov — dày 1.2pt trắng.
-//  Shape #2 (fill): count + HP bars + alert — fill TRẮNG đặc.
+//  Shape #1 (stroke): box / snapline / bone / fov — stroke 0.6pt trắng (mỏng).
+//  Shape #2 (fill): count + HP bars — fill TRẮNG đặc.
 //
 #import "SpringBoardOverlay.h"
 #import "RemoteCall.h"
@@ -17,17 +17,16 @@
 #define SB_MIN_PUBLISH_INTERVAL_US 16666ULL
 #define SB_DRAW_BONES 0
 
-// Line width cho shape #1 (box/snapline/fov). Tăng từ 0.6 → 1.2 để nhìn rõ.
-#define SB_STROKE_WIDTH 1.2
+// Stroke width cho shape #1 (box/snapline/fov) — giữ mỏng như cũ.
+#define SB_STROKE_WIDTH 0.6
 
-// Fill cho countLayer + HP bar: 1 = TRẮNG đặc (nhìn rõ trên nền tối),
-// 0 = ĐEN (nhìn rõ trên nền sáng). Mặc định TRẮNG.
+// Fill màu cho count + HP bar: 1 = TRẮNG đặc, 0 = ĐEN.
 #define SB_FILL_USE_WHITE 1
 
 static BOOL g_sbOverlayOn = NO;
 static uint64_t g_sbWin = 0;
-static uint64_t g_sbShape = 0;      // stroke
-static uint64_t g_sbFillShape = 0;  // fill
+static uint64_t g_sbShape = 0;      // stroke shape
+static uint64_t g_sbFillShape = 0;  // fill shape
 static uint64_t g_sbCanvas = 0;
 
 static uint64_t g_sbPersistentPath = 0;
@@ -72,11 +71,14 @@ static const char *kShapeKeys[17] = {
     "countLayer"
 };
 
-// Layer nào dùng FILL thay vì stroke:
-//   9 hpFillGreen, 10 hpFillOrange, 11 hpFillRed,
-//   13 alert, 16 countLayer
+// Layer nào dùng FILL (đặc trắng) thay vì stroke:
+//   9  hpFillGreen   — thanh máu xanh
+//   10 hpFillOrange  — thanh máu cam
+//   11 hpFillRed     — thanh máu đỏ
+//   16 countLayer    — CLEAR / số đếm
 // bgFillBlack (12) giữ stroke → viền quanh thanh máu.
-#define SB_IS_FILL_LAYER(L) ((L) == 9 || (L) == 10 || (L) == 11 || (L) == 13 || (L) == 16)
+// alert (13) giữ stroke → tam giác rỗng như cũ.
+#define SB_IS_FILL_LAYER(L) ((L) == 9 || (L) == 10 || (L) == 11 || (L) == 16)
 
 static uint64_t dlsym_remote(const char *fn, uint64_t a0, uint64_t a1, uint64_t a2,
                              uint64_t a3, uint64_t a4, uint64_t a5, uint64_t a6, uint64_t a7) {
@@ -387,13 +389,12 @@ int SBoardStartOverlay(void) {
     r_msg2_main(container, "setOpaque:", 0, 0,0,0);
     r_msg2_main(win, "addSubview:", container, 0,0,0);
 
-    // ===== SHAPE #1: stroke trắng (box / snapline / bone / fov) =====
+    // ===== SHAPE #1: stroke trắng 0.6pt — box/snapline/bone/fov =====
     uint64_t shape = r_msg2_main(r_class("CAShapeLayer"), "layer", 0,0,0,0);
     if (!r_is_objc_ptr(shape)) { destroy_remote_call(); return -1; }
     r_msg2_main_raw(shape, "setFrame:", bounds, 32, NULL,0,NULL,0,NULL,0);
     if (r_is_objc_ptr(whiteCGColor)) r_msg2_main(shape, "setStrokeColor:", whiteCGColor, 0,0,0);
     r_msg2_main(shape, "setFillColor:", 0, 0,0,0);
-    // Line width 1.2pt — nhìn rõ hơn 0.6pt cũ
     double lw = SB_STROKE_WIDTH;
     r_msg2_main_raw(shape, "setLineWidth:", &lw, 8, NULL,0,NULL,0,NULL,0);
     r_msg2_main(shape, "setOpaque:", 0, 0,0,0);
@@ -401,7 +402,7 @@ int SBoardStartOverlay(void) {
     r_msg2_main_raw(shape, "setZPosition:", &z1, 8, NULL,0,NULL,0,NULL,0);
     sb_disable_layer_actions(shape);
 
-    // ===== SHAPE #2: FILL (count + HP bar + alert) =====
+    // ===== SHAPE #2: fill TRẮNG đặc — HP bar + count =====
     uint64_t fillShape = r_msg2_main(r_class("CAShapeLayer"), "layer", 0,0,0,0);
     if (r_is_objc_ptr(fillShape)) {
         r_msg2_main_raw(fillShape, "setFrame:", bounds, 32, NULL,0,NULL,0,NULL,0);
@@ -409,7 +410,7 @@ int SBoardStartOverlay(void) {
         if (r_is_objc_ptr(chosenFill)) r_msg2_main(fillShape, "setFillColor:", chosenFill, 0,0,0);
         r_msg2_main(fillShape, "setStrokeColor:", 0, 0,0,0);
         r_msg2_main(fillShape, "setOpaque:", 0, 0,0,0);
-        double z2 = 101;
+        double z2 = 101; // trên shape stroke
         r_msg2_main_raw(fillShape, "setZPosition:", &z2, 8, NULL,0,NULL,0,NULL,0);
         sb_disable_layer_actions(fillShape);
     }
@@ -444,8 +445,8 @@ int SBoardStartOverlay(void) {
     (void)ptsBuffer();
     (void)sb_ensure_setpath_invocation();
 
-    NSLog(@"[SBOverlay] LIVE stroke=0x%llx fill=0x%llx fillWhite=%d",
-          shape, fillShape, (int)SB_FILL_USE_WHITE);
+    NSLog(@"[SBOverlay] LIVE stroke=0x%llx fill=0x%llx fillWhite=%d lw=%.1f",
+          shape, fillShape, (int)SB_FILL_USE_WHITE, SB_STROKE_WIDTH);
     return 0;
 }
 
@@ -560,7 +561,6 @@ void SBRemotePushESPFrame(UIView *espView) {
             calls += 2;
             if (!strokePath || !fillPath) return;
 
-            // Ring buffer release cũ
             if (g_sbPathRing[g_sbPathRingAt]) {
                 dlsym_remote("CGPathRelease", g_sbPathRing[g_sbPathRingAt], 0,0,0,0,0,0,0);
                 g_sbPathRing[g_sbPathRingAt] = 0;
