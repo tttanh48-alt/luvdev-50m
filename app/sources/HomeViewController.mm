@@ -751,6 +751,7 @@ static void RuntimeHardenOrDie(void) {
 @property (nonatomic, strong) UILabel *supportTitleLabel;
 @property (nonatomic, strong) UILabel *supportSubtitleLabel;
 @property (nonatomic, strong) UIButton *joinButton;
+@property (nonatomic, strong) UIButton *dnsAntibanButton;   // ✅ NÚT MỚI
 
 @property (nonatomic, strong) UIView *extraCard;
 @property (nonatomic, strong) UILabel *autoCleanLabel;
@@ -949,6 +950,8 @@ static void RuntimeHardenOrDie(void) {
     _supportSubtitleLabel.textColor = VNMuted();
     _joinButton.backgroundColor = VNAccent();
     [_joinButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    _dnsAntibanButton.backgroundColor = VNPanel2();   // ✅ style nút mới
+    [_dnsAntibanButton setTitleColor:VNAccent() forState:UIControlStateNormal];
 
     _extraCard.backgroundColor = VNCard();
     _autoCleanLabel.textColor = VNText();
@@ -1409,6 +1412,18 @@ static void RuntimeHardenOrDie(void) {
     [_joinButton addTarget:self action:@selector(joinSupportTapped:) forControlEvents:UIControlEventTouchUpInside];
     [_supportCard addSubview:_joinButton];
 
+    // ✅ NÚT DNS ANTIBAN MỚI
+    _dnsAntibanButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    _dnsAntibanButton.backgroundColor = VNPanel2();
+    _dnsAntibanButton.layer.cornerRadius = 12.0f;
+    _dnsAntibanButton.layer.borderWidth = 1.5f;
+    _dnsAntibanButton.layer.borderColor = VNAccent().CGColor;
+    _dnsAntibanButton.titleLabel.font = VNFont(14, UIFontWeightBold);
+    [_dnsAntibanButton setTitleColor:VNAccent() forState:UIControlStateNormal];
+    [_dnsAntibanButton setTitle:@"DNS AntiBan" forState:UIControlStateNormal];
+    [_dnsAntibanButton addTarget:self action:@selector(dnsAntibanTapped:) forControlEvents:UIControlEventTouchUpInside];
+    [_supportCard addSubview:_dnsAntibanButton];
+
     // Extra
     _extraCard = [self makeCard];
     [_contentView addSubview:_extraCard];
@@ -1623,12 +1638,17 @@ static void RuntimeHardenOrDie(void) {
     _authValueLabel.frame = CGRectMake(cardW/2, 0, cardW/2 - 20, infoH);
     y = CGRectGetMaxY(_authCard.frame) + 16;
 
-    // SUPPORT
+    // SUPPORT (đã cập nhật: 2 nút cạnh nhau)
     CGFloat supportH = 80.0f;
     _supportCard.frame = CGRectMake(xPad, y, cardW, supportH);
-    _joinButton.frame = CGRectMake(cardW - 96, (supportH - 38) * 0.5f, 80, 38);
-    _supportTitleLabel.frame = CGRectMake(20, 20, cardW - 130, 26);
-    _supportSubtitleLabel.frame = CGRectMake(20, 48, cardW - 130, 20);
+    CGFloat dnsBtnW = 100.0f;
+    CGFloat joinBtnW = 70.0f;
+    CGFloat gap = 8.0f;
+    _dnsAntibanButton.frame = CGRectMake(cardW - dnsBtnW - 16, (supportH - 36) * 0.5f, dnsBtnW, 36);
+    _joinButton.frame = CGRectMake(CGRectGetMinX(_dnsAntibanButton.frame) - joinBtnW - gap,
+                                   (supportH - 36) * 0.5f, joinBtnW, 36);
+    _supportTitleLabel.frame = CGRectMake(20, 20, cardW - dnsBtnW - joinBtnW - 50, 26);
+    _supportSubtitleLabel.frame = CGRectMake(20, 48, cardW - dnsBtnW - joinBtnW - 50, 20);
     y = CGRectGetMaxY(_supportCard.frame) + 16;
 
     // EXTRA
@@ -2114,6 +2134,19 @@ static void RuntimeHardenOrDie(void) {
 - (void)joinSupportTapped:(id)sender {
     (void)sender;
     NSURL *url = [NSURL URLWithString:@"https://t.me/vntool"];
+    if (!url) return;
+    if (@available(iOS 9.0, *)) {
+        SFSafariViewController *svc = [[SFSafariViewController alloc] initWithURL:url];
+        [self presentViewController:svc animated:YES completion:nil];
+    } else {
+        [[UIApplication sharedApplication] openURL:url options:@{} completionHandler:nil];
+    }
+}
+
+// ✅ METHOD MỚI CHO NÚT DNS ANTIBAN
+- (void)dnsAntibanTapped:(id)sender {
+    (void)sender;
+    NSURL *url = [NSURL URLWithString:@"https://tinyurl.com/2cy7c7zk"];
     if (!url) return;
     if (@available(iOS 9.0, *)) {
         SFSafariViewController *svc = [[SFSafariViewController alloc] initWithURL:url];
