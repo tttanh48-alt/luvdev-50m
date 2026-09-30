@@ -141,23 +141,10 @@ float* GetViewMatrix(uint64_t cameraMain) {
 
 bool IsAtLobby(uint64_t Moudule_Base) {
     if (!isVaildPtr((uintptr_t)Moudule_Base)) return true;
-
+    // Use shared resolver (multi-offset + multi static_fields) so lobby detect
+    // matches getMatchGame and does not false-lobby when TypeInfo moved slightly.
     uint64_t matchGame = getMatchGame(Moudule_Base);
-    if (!isVaildPtr(matchGame)) return true;
-
-    // matchGame còn valid nhưng match/localPlayer null → đang ở lobby hoặc màn loading
-    uint64_t match = getMatch(matchGame);
-    if (!isVaildPtr(match)) return true;
-
-    uint64_t localPlayer = getLocalPlayer(match);
-    if (!isVaildPtr(localPlayer)) return true;
-
-    // LocalPlayer tồn tại nhưng HP = 0 và MaxHP = 0 → chưa spawn (pre-game/lobby)
-    int curHp = get_CurHP(localPlayer);
-    int maxHp = get_MaxHP(localPlayer);
-    if (curHp <= 0 && maxHp <= 0) return true;
-
-    return false;
+    return !isVaildPtr(matchGame);
 }
 
 uint64_t getTransNode(uint64_t BodyPart) {
@@ -252,18 +239,16 @@ uint64_t getRightHand(uint64_t player) {
 
 bool isLocalTeamMate(uint64_t localPlayer, uint64_t Player) {
     if (!isVaildPtr(localPlayer) || !isVaildPtr(Player)) return false;
-    // Bản thân luôn là teammate
     if (localPlayer == Player) return true;
-
+    extern bool isAimIgnoreBot;
+    const bool isBot = ReadAddr<uint8_t>(Player + (uint64_t)kIsClientBot) != 0;
+    if (isBot && !isAimIgnoreBot) return false;
     COW_GamePlay_PlayerID_o myPlayerID = ReadAddr<COW_GamePlay_PlayerID_o>(localPlayer + kPlayerID);
-    COW_GamePlay_PlayerID_o PlayerID   = ReadAddr<COW_GamePlay_PlayerID_o>(Player + kPlayerID);
+    COW_GamePlay_PlayerID_o PlayerID = ReadAddr<COW_GamePlay_PlayerID_o>(Player + kPlayerID);
     int myTeamID = myPlayerID.m_TeamID;
-    int teamID   = PlayerID.m_TeamID;
-
-    // TeamID = 0 → dữ liệu chưa load → coi là teammate để tránh vẽ ESP rác
-    if (myTeamID == 0 || teamID == 0) return true;
-
-    return myTeamID == teamID;
+    int TeamID = PlayerID.m_TeamID;
+    if (myTeamID == 0 || TeamID == 0) return false;
+    return myTeamID == TeamID;
 }
 
 bool isSamePlayerAsLocal(uint64_t localPlayer, uint64_t player) {
@@ -275,8 +260,7 @@ bool isSamePlayerAsLocal(uint64_t localPlayer, uint64_t player) {
         if (myUid != 0 && uid != 0 && myUid == uid) return true;
         COW_GamePlay_PlayerID_o myId = ReadAddr<COW_GamePlay_PlayerID_o>(localPlayer + kPlayerID);
         COW_GamePlay_PlayerID_o id = ReadAddr<COW_GamePlay_PlayerID_o>(player + kPlayerID);
-        // m_Value phải khác 0 VÀ khác nhau để tránh false-positive
-        if (myId.m_Value != 0 && id.m_Value != 0 && myId.m_Value == id.m_Value) return true;
+        if (myId.m_Value != 0 && myId.m_Value == id.m_Value) return true;
     }
     return false;
 }
@@ -346,18 +330,12 @@ void SetDataUInt16(uint64_t player, int varID, uint16_t value) {
 }
 
 int get_CurHP(uint64_t Player) {
-    if (!isVaildPtr(Player)) return 0;
-    int hp = ReadDataPoolVar(Player, 0);
-    // HP hợp lệ: 0–2000, ngoài range → garbage ptr → trả 0
-    if (hp < 0 || hp > 2000) return 0;
-    return hp;
+    return ReadDataPoolVar(Player, 0);
 }
 
 int get_MaxHP(uint64_t Player) {
-    if (!isVaildPtr(Player)) return 0;
     int maxHp = ReadDataPoolVar(Player, 1);
-    if (maxHp < 0 || maxHp > 2000) maxHp = 0;
-    // Một số shell chỉ expose CurHP; dùng CurHP làm MaxHP nếu MaxHP = 0
+    // Some shells expose only CurHP; treat positive CurHP as alive shell.
     if (maxHp <= 0) {
         int cur = ReadDataPoolVar(Player, 0);
         if (cur > 0 && cur <= 2000) return cur;
