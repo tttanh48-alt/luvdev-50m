@@ -286,9 +286,9 @@ static inline bool AimTargetVisibleForWallOff(uint64_t player) {
 }
 
 static inline bool AimTargetVisibleStrictForSilent(uint64_t player) {
-    if (AimThroughAnyCoverNow()) return true;
+    // Silent luôn hoạt động — xa gần, sau tường, không giới hạn
     (void)player;
-    return false;
+    return true;
 }
 
 static inline Vector3 tryTransformPos(uint64_t nodeOrTf) {
@@ -820,12 +820,8 @@ static void SilentAimThread(uint64_t localPlayer) {
         }
 
         if (hasTarget && isVaildPtr(lp)) {
-            if (!AimThroughAnyCoverNow() && isVaildPtr(enemy) && !AimTargetVisibleStrictForSilent(enemy)) {
-                SilentAimClearTarget();
-                g_lastAimingInfo = 0;
-                std::this_thread::yield();
-                continue;
-            }
+            // Silent không clear target dù sau tường hay xa — luôn giữ target
+            // if (!AimThroughAnyCoverNow() && ...) ← đã bỏ check này
             if (isVaildPtr(enemy)) {
                 Vector3 live = ResolveSilentAimWorldPos(enemy, posMode);
                 if (!IsZeroVec(live)) {
@@ -851,10 +847,7 @@ static void SilentAimThread(uint64_t localPlayer) {
 
 static void SilentAimSetTarget(uint64_t localPlayer, uint64_t enemy, const Vector3 &bonePos, const Vector3 &fromLoc, int posMode) {
     if (!isVaildPtr(localPlayer) || IsZeroVec(bonePos)) return;
-    if (!AimThroughAnyCoverNow() && isVaildPtr(enemy) && !AimTargetVisibleStrictForSilent(enemy)) {
-        SilentAimClearTarget();
-        return;
-    }
+    // Silent không check cover/visible — luôn set target
     if (posMode < 0) posMode = 0;
     if (posMode > 2) posMode = 2;
     {
@@ -4787,8 +4780,8 @@ static inline uint64_t ESPPhaseNowUS(void) {
     // [SILENT-BURST-FIX] Silent target apply — tăng burst khi firing,
     // refresh bone + origin mỗi 4 burst để viên trúng viên.
     // ============================================================
-    if (silentActive && bestTarget != 0 && AimTargetStillValid(bestTarget) &&
-        (allowThroughWall || AimTargetVisibleStrictForSilent(bestTarget))) {
+    if (silentActive && bestTarget != 0 && AimTargetStillValid(bestTarget)) {
+        // Silent luôn apply — không check tường hay visible
         Vector3 silentBone = ResolveSilentAimWorldPos(bestTarget, aimPosition);
         if (!IsZeroVec(silentBone) && bestDistance >= 0.15f) {
             SilentAimSetTarget(myPawnObject, bestTarget, silentBone, myLocation, aimPosition);
