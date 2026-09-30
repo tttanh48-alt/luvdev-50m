@@ -1,9 +1,7 @@
 //
-//  SpringBoardOverlay.m — Fl0rk DrawView
+//  SpringBoardOverlay.m — Fl0rk DrawView: EXTRA trojan thread
 //
-//  Shape #1 (stroke): box / snapline / bone / fov — stroke 0.6pt trắng (mỏng).
-//  Shape #2 (fill): count + HP bars — fill TRẮNG đặc.
-//
+
 #import "SpringBoardOverlay.h"
 #import "RemoteCall.h"
 #import "remote_objc.h"
@@ -15,27 +13,18 @@
 
 #define SB_OVERLAY_WIN_LEVEL 999999.0
 #define SB_MIN_PUBLISH_INTERVAL_US 16666ULL
+
 #define SB_DRAW_BONES 0
-
-// Stroke width cho shape #1 (box/snapline/fov) — giữ mỏng như cũ.
-#define SB_STROKE_WIDTH 0.6
-
-// Fill màu cho count + HP bar: 1 = TRẮNG đặc, 0 = ĐEN.
-#define SB_FILL_USE_WHITE 1
 
 static BOOL g_sbOverlayOn = NO;
 static uint64_t g_sbWin = 0;
-static uint64_t g_sbShape = 0;      // stroke shape
-static uint64_t g_sbFillShape = 0;  // fill shape
+static uint64_t g_sbShape = 0;
 static uint64_t g_sbCanvas = 0;
 
 static uint64_t g_sbPersistentPath = 0;
 #define SB_PATH_HOLD_FRAMES 4
 static uint64_t g_sbPathRing[SB_PATH_HOLD_FRAMES] = {0};
 static int g_sbPathRingAt = 0;
-static uint64_t g_sbFillPathRing[SB_PATH_HOLD_FRAMES] = {0};
-static int g_sbFillPathRingAt = 0;
-
 static uint64_t g_sbMirrorPtsBuf = 0;
 static uint32_t g_sbPathHash = 0;
 static NSUInteger g_sbLastPathBytes = 0;
@@ -53,32 +42,30 @@ static uint64_t g_sbSummaryUpdates = 0;
 static int g_sbConsecFail = 0;
 static int g_sbEverOn = 0;
 static uint64_t g_sbRearmAfterUS = 0;
+
 static int g_sbSessionDead = 0;
 static uint64_t g_sbLastPublishUS = 0;
 static uint64_t g_sbRearmBackoffUS = 5000000ULL;
+
 static uint64_t g_sbBusyDrops = 0;
 static uint64_t g_sbHoldUS = 0;
 static uint64_t g_sbNextPublishUS = 0;
 static uint32_t g_sbLastSubpaths = 0;
 static uint64_t g_sbLastCalls = 0;
 
+// ============================================================
+//  kShapeKeys — THÊM "countLayer" → 17 phần tử
+//  Đây là fix chính cho isCount: shape vẽ số đếm ở esp.mm
+//  sẽ được mirror sang SpringBoard.
+// ============================================================
 static const char *kShapeKeys[17] = {
     "boxLayer", "boxBotLayer", "boxKnockedLayer",
     "boneLayer", "boneBotLayer", "boneKnockedLayer",
     "snaplineLayer", "snaplineBotLayer", "snaplineKnockedLayer",
     "hpFillGreenLayer", "hpFillOrangeLayer", "hpFillRedLayer",
     "bgFillBlackLayer", "alertLayer", "fovLayer", "aimAssistLayer",
-    "countLayer"
+    "countLayer"   // <-- MỚI
 };
-
-// Layer nào dùng FILL (đặc trắng) thay vì stroke:
-//   9  hpFillGreen   — thanh máu xanh
-//   10 hpFillOrange  — thanh máu cam
-//   11 hpFillRed     — thanh máu đỏ
-//   16 countLayer    — CLEAR / số đếm
-// bgFillBlack (12) giữ stroke → viền quanh thanh máu.
-// alert (13) giữ stroke → tam giác rỗng như cũ.
-#define SB_IS_FILL_LAYER(L) ((L) == 9 || (L) == 10 || (L) == 11 || (L) == 16)
 
 static uint64_t dlsym_remote(const char *fn, uint64_t a0, uint64_t a1, uint64_t a2,
                              uint64_t a3, uint64_t a4, uint64_t a5, uint64_t a6, uint64_t a7) {
@@ -167,6 +154,7 @@ static BOOL mergePaths(UIView *espView, NSMutableData *d) {
     g_sbSubpathCount = 0;
 
     int emitted = 0;
+    // === VÒNG LẶP 17 (thay vì 16) — bao gồm countLayer ===
     for (int i = 0; i < 17; i++) {
         id val = [espView valueForKey:[NSString stringWithUTF8String:kShapeKeys[i]]];
         if (![val isKindOfClass:[CAShapeLayer class]]) continue;
@@ -211,9 +199,6 @@ static void sb_forget_local_paint_state(void) {
     g_sbNextPublishUS = 0;
     for (int k = 0; k < SB_PATH_HOLD_FRAMES; k++) g_sbPathRing[k] = 0;
     g_sbPathRingAt = 0;
-    g_sbFillShape = 0;
-    for (int k = 0; k < SB_PATH_HOLD_FRAMES; k++) g_sbFillPathRing[k] = 0;
-    g_sbFillPathRingAt = 0;
 }
 
 static void sb_disable_layer_actions(uint64_t layer) {
@@ -283,14 +268,13 @@ static BOOL sb_ensure_setpath_invocation(void) {
     return YES;
 }
 
-static void sb_invoke_setpath(uint64_t shape, uint64_t path) {
-    if (!r_is_objc_ptr(shape) || !path) return;
+static void sb_invoke_cached_main_raw(void) {
     if (!sb_ensure_setpath_invocation()) {
-        r_msg2_main_async(shape, "setPath:", path, 0,0,0);
+        uint64_t rp = persistentPath();
+        if (rp) r_msg2_main_async(g_sbShape, "setPath:", rp, 0,0,0);
         return;
     }
-    r_msg2(g_sbSetPathInv, "setTarget:", shape, 0, 0, 0);
-    remote_write64(g_sbSetPathArgBuf, path);
+    remote_write64(g_sbSetPathArgBuf, persistentPath());
     r_msg2(g_sbSetPathInv, "setArgument:atIndex:", g_sbSetPathArgBuf, 2, 0, 0);
     if (g_sbPerformMainSel && g_sbInvokeSel) {
         r_msg(g_sbSetPathInv, g_sbPerformMainSel, g_sbInvokeSel, 0, 0, 0);
@@ -324,7 +308,7 @@ int SBoardStartOverlay(void) {
 
     if (!g_kexploit_ready) return -1;
 
-    NSLog(@"[SBOverlay] start...");
+    NSLog(@"[SBOverlay] Fl0rk start_esp_renderer_in_session...");
     if (sb_open_session() != 0) {
         NSLog(@"[SBOverlay] session open failed");
         return -1;
@@ -362,15 +346,14 @@ int SBoardStartOverlay(void) {
     uint64_t clsCol = r_class("UIColor");
     uint64_t clear = r_is_objc_ptr(clsCol) ? r_msg2_main(clsCol, "clearColor", 0,0,0,0) : 0;
     uint64_t whiteColor = r_is_objc_ptr(clsCol) ? r_msg2_main(clsCol, "whiteColor", 0,0,0,0) : 0;
-    uint64_t blackColor = r_is_objc_ptr(clsCol) ? r_msg2_main(clsCol, "blackColor", 0,0,0,0) : 0;
     uint64_t whiteCGColor = r_is_objc_ptr(whiteColor) ? r_msg2_main(whiteColor, "CGColor", 0,0,0,0) : 0;
-    uint64_t blackCGColor = r_is_objc_ptr(blackColor) ? r_msg2_main(blackColor, "CGColor", 0,0,0,0) : 0;
 
     uint64_t winAlloc = r_msg2_main(r_class("UIWindow"), "alloc", 0,0,0,0);
     if (!r_is_objc_ptr(winAlloc)) { destroy_remote_call(); return -1; }
 
     uint64_t win = r_msg2_main(winAlloc, "initWithWindowScene:", scene, 0,0,0);
     if (!r_is_objc_ptr(win)) {
+        NSLog(@"[SBOverlay] initWithWindowScene failed");
         destroy_remote_call();
         return -1;
     }
@@ -389,37 +372,20 @@ int SBoardStartOverlay(void) {
     r_msg2_main(container, "setOpaque:", 0, 0,0,0);
     r_msg2_main(win, "addSubview:", container, 0,0,0);
 
-    // ===== SHAPE #1: stroke trắng 0.6pt — box/snapline/bone/fov =====
     uint64_t shape = r_msg2_main(r_class("CAShapeLayer"), "layer", 0,0,0,0);
     if (!r_is_objc_ptr(shape)) { destroy_remote_call(); return -1; }
     r_msg2_main_raw(shape, "setFrame:", bounds, 32, NULL,0,NULL,0,NULL,0);
     if (r_is_objc_ptr(whiteCGColor)) r_msg2_main(shape, "setStrokeColor:", whiteCGColor, 0,0,0);
     r_msg2_main(shape, "setFillColor:", 0, 0,0,0);
-    double lw = SB_STROKE_WIDTH;
+    double lw = 0.6;
     r_msg2_main_raw(shape, "setLineWidth:", &lw, 8, NULL,0,NULL,0,NULL,0);
     r_msg2_main(shape, "setOpaque:", 0, 0,0,0);
-    double z1 = 100;
-    r_msg2_main_raw(shape, "setZPosition:", &z1, 8, NULL,0,NULL,0,NULL,0);
+    double z = 100;
+    r_msg2_main_raw(shape, "setZPosition:", &z, 8, NULL,0,NULL,0,NULL,0);
     sb_disable_layer_actions(shape);
 
-    // ===== SHAPE #2: fill TRẮNG đặc — HP bar + count =====
-    uint64_t fillShape = r_msg2_main(r_class("CAShapeLayer"), "layer", 0,0,0,0);
-    if (r_is_objc_ptr(fillShape)) {
-        r_msg2_main_raw(fillShape, "setFrame:", bounds, 32, NULL,0,NULL,0,NULL,0);
-        uint64_t chosenFill = SB_FILL_USE_WHITE ? whiteCGColor : blackCGColor;
-        if (r_is_objc_ptr(chosenFill)) r_msg2_main(fillShape, "setFillColor:", chosenFill, 0,0,0);
-        r_msg2_main(fillShape, "setStrokeColor:", 0, 0,0,0);
-        r_msg2_main(fillShape, "setOpaque:", 0, 0,0,0);
-        double z2 = 101; // trên shape stroke
-        r_msg2_main_raw(fillShape, "setZPosition:", &z2, 8, NULL,0,NULL,0,NULL,0);
-        sb_disable_layer_actions(fillShape);
-    }
-
     uint64_t cLayer = r_msg2_main(container, "layer", 0,0,0,0);
-    if (r_is_objc_ptr(cLayer)) {
-        r_msg2_main(cLayer, "addSublayer:", shape, 0,0,0);
-        if (r_is_objc_ptr(fillShape)) r_msg2_main(cLayer, "addSublayer:", fillShape, 0,0,0);
-    }
+    if (r_is_objc_ptr(cLayer)) r_msg2_main(cLayer, "addSublayer:", shape, 0,0,0);
 
     r_msg2_main(win, "setHidden:", 0, 0,0,0);
 
@@ -431,7 +397,6 @@ int SBoardStartOverlay(void) {
     pthread_mutex_lock(&g_sbLock);
     g_sbWin = win;
     g_sbShape = shape;
-    g_sbFillShape = fillShape;
     g_sbCanvas = container;
     g_sbOverlayOn = YES;
     g_sbEverOn = 1;
@@ -445,8 +410,8 @@ int SBoardStartOverlay(void) {
     (void)ptsBuffer();
     (void)sb_ensure_setpath_invocation();
 
-    NSLog(@"[SBOverlay] LIVE stroke=0x%llx fill=0x%llx fillWhite=%d lw=%.1f",
-          shape, fillShape, (int)SB_FILL_USE_WHITE, SB_STROKE_WIDTH);
+    NSLog(@"[SBOverlay] Fl0rk session LIVE win=0x%llx geom=0x%llx inv=%s",
+          win, shape, r_is_objc_ptr(g_sbSetPathInv) ? "OK" : "NO");
     return 0;
 }
 
@@ -456,7 +421,7 @@ void SBRemotePushESPFrame(UIView *espView) {
             g_sbRearmAfterUS = now_us() + 3000000ULL;
             g_sbConsecFail = 0;
             if (SBoardStartOverlay() == 0) {
-                NSLog(@"[PUSH-REARM] overlay rebuilt");
+                NSLog(@"[PUSH-REARM] overlay rebuilt — ESP is live again");
             }
         }
         return;
@@ -468,11 +433,20 @@ void SBRemotePushESPFrame(UIView *espView) {
         static uint64_t s_hbUS = 0;
         if (tGate > s_hbUS) {
             s_hbUS = tGate + 1000000ULL;
-            NSLog(@"[PUSH-HB] on=%d upd=%llu att=%llu skip=%llu",
-                  (int)g_sbOverlayOn,
+            const int64_t nextIn = (int64_t)g_sbNextPublishUS - (int64_t)tGate;
+            const int64_t sinceDraw = (g_sbLastPublishUS == 0)
+                                   ? -1 : (int64_t)(tGate - g_sbLastPublishUS);
+            NSLog(@"[PUSH-HB] on=%d ever=%d fail=%d sdead=%d ls=%d ok=%d "
+                  @"upd=%llu att=%llu skip=%llu next=%lldms since=%lldms thermal=%ld",
+                  (int)g_sbOverlayOn, g_sbEverOn, g_sbConsecFail, g_sbSessionDead,
+                  (int)remote_call_has_local_state(),
+                  (int)remote_call_current_success(),
                   (unsigned long long)g_sbSummaryUpdates,
                   (unsigned long long)g_sbSummaryAttempts,
-                  (unsigned long long)g_sbSummarySkips);
+                  (unsigned long long)g_sbSummarySkips,
+                  (long long)(nextIn / 1000),
+                  (long long)(sinceDraw / 1000),
+                  (long)NSProcessInfo.processInfo.thermalState);
         }
     }
 
@@ -483,8 +457,16 @@ void SBRemotePushESPFrame(UIView *espView) {
             g_sbRearmBackoffUS = (wait < 60000000ULL) ? (wait * 2) : 60000000ULL;
             g_sbConsecFail = 0;
             dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+                const char *why =
+                    remote_call_init_failure_description(remote_call_last_init_failure());
+                NSLog(@"[PUSH-REARM] nothing drawn for 3s (ls=%d ok=%d init=%s pid=%d)",
+                      (int)remote_call_has_local_state(),
+                      (int)remote_call_current_success(),
+                      why ? why : "?", remote_call_current_pid());
                 if (SBoardStartOverlay() == 0) {
-                    NSLog(@"[PUSH-REARM] session re-initialised");
+                    NSLog(@"[PUSH-REARM] session re-initialised, overlay live");
+                } else {
+                    NSLog(@"[PUSH-REARM] re-init failed, will retry");
                 }
             });
         }
@@ -494,6 +476,7 @@ void SBRemotePushESPFrame(UIView *espView) {
         return;
     }
     g_sbSessionDead = 0;
+
     g_sbSummaryAttempts++;
 
     uint64_t t = now_us();
@@ -533,9 +516,30 @@ void SBRemotePushESPFrame(UIView *espView) {
             if (!remote_call_has_local_state() || !remote_call_current_success()) return;
             if (!r_is_objc_ptr(g_sbShape)) return;
 
+            const int okBefore = remote_call_current_success() ? 1 : 0;
+            uint64_t rp = persistentPath();
+            const int okAfterPath = remote_call_current_success() ? 1 : 0;
             uint64_t ptsBuf = ptsBuffer();
-            if (!ptsBuf || !remote_call_current_success()) {
-                if (++g_sbConsecFail >= 3) {
+            const int okAfterBuf = remote_call_current_success() ? 1 : 0;
+            if (!okBefore || !rp || !ptsBuf || !okAfterBuf || !okAfterPath) {
+                static uint64_t s_probeUS = 0;
+                uint64_t tP = now_us();
+                if (tP > s_probeUS) {
+                    s_probeUS = tP + 2000000ULL;
+                    NSLog(@"[PUSH-PROBE] before=%d path=0x%llx afterPath=%d "
+                          @"buf=0x%llx afterBuf=%d",
+                          okBefore, (unsigned long long)rp, okAfterPath,
+                          (unsigned long long)ptsBuf, okAfterBuf);
+                }
+            }
+            if (!rp || !ptsBuf || !remote_call_current_success()) {
+                if (remote_call_has_local_state() && !remote_call_current_success()) {
+                    if (++g_sbConsecFail < 3) {
+                        g_sbSummarySkips++;
+                        return;
+                    }
+                    NSLog(@"[PUSH-DEAD] RemoteCall failed %d times in a row — overlay down",
+                          g_sbConsecFail);
                     abandon_remote_call();
                     pthread_mutex_lock(&g_sbLock);
                     g_sbOverlayOn = NO;
@@ -555,35 +559,32 @@ void SBRemotePushESPFrame(UIView *espView) {
             uint64_t calls = 0;
             uint32_t drawn = 0;
 
-            // Tạo 2 path song song: stroke + fill
-            uint64_t strokePath = dlsym_remote("CGPathCreateMutable", 0,0,0,0,0,0,0,0);
-            uint64_t fillPath   = dlsym_remote("CGPathCreateMutable", 0,0,0,0,0,0,0,0);
-            calls += 2;
-            if (!strokePath || !fillPath) return;
-
+            uint64_t freshPath = dlsym_remote("CGPathCreateMutable", 0,0,0,0,0,0,0,0);
+            calls++;
+            if (!freshPath) {
+                NSLog(@"[PUSH-PATH] CGPathCreateMutable returned 0 — skipping frame");
+                return;
+            }
             if (g_sbPathRing[g_sbPathRingAt]) {
                 dlsym_remote("CGPathRelease", g_sbPathRing[g_sbPathRingAt], 0,0,0,0,0,0,0);
                 g_sbPathRing[g_sbPathRingAt] = 0;
             }
-            g_sbPathRing[g_sbPathRingAt] = strokePath;
+            g_sbPathRing[g_sbPathRingAt] = freshPath;
             g_sbPathRingAt = (g_sbPathRingAt + 1) % SB_PATH_HOLD_FRAMES;
-
-            if (g_sbFillPathRing[g_sbFillPathRingAt]) {
-                dlsym_remote("CGPathRelease", g_sbFillPathRing[g_sbFillPathRingAt], 0,0,0,0,0,0,0);
-                g_sbFillPathRing[g_sbFillPathRingAt] = 0;
-            }
-            g_sbFillPathRing[g_sbFillPathRingAt] = fillPath;
-            g_sbFillPathRingAt = (g_sbFillPathRingAt + 1) % SB_PATH_HOLD_FRAMES;
-
-            g_sbPersistentPath = strokePath;
+            rp = freshPath;
+            g_sbPersistentPath = freshPath;
 
             double rectBuf[512];
             int rectDoubles = 0;
-            double fillRectBuf[256];
-            int fillRectDoubles = 0;
+            int maxPts = 0;
+            int nBig = 0;
+            int c2 = 0, c3 = 0, c4 = 0, c5to8 = 0, c9to32 = 0, c33p = 0;
+            double firstRect[4] = {0, 0, 0, 0};
+            int haveFirstRect = 0;
 
             size_t i = 0;
             int curLayer = -1;
+            uint32_t nTrunc = 0;
             while (i < len) {
                 double run[2048];
                 int rn = 0;
@@ -601,13 +602,21 @@ void SBRemotePushESPFrame(UIView *espView) {
                         run[rn++] = x; run[rn++] = y;
                         continue;
                     }
-                    if (rn >= 2046) { i = len; break; }
+                    if (rn >= 2046) { nTrunc++; i = len; break; }
                     run[rn++] = x; run[rn++] = y;
                 }
                 if (rn < 4) continue;
                 subpaths++;
 
                 const int np = rn / 2;
+                if (np > maxPts) maxPts = np;
+                if (np > 8) nBig++;
+                if (np == 2) c2++;
+                else if (np == 3) c3++;
+                else if (np == 4) c4++;
+                else if (np <= 8) c5to8++;
+                else if (np <= 32) c9to32++;
+                else c33p++;
                 int isRect = 0;
                 double rx = 0, ry = 0, rw = 0, rh = 0;
 
@@ -641,67 +650,57 @@ void SBRemotePushESPFrame(UIView *espView) {
                         }
                     }
                 } else if (np == 2) {
-                    limbCount++;
-                    if (curLayer >= 6 && curLayer <= 8) {
-                        remote_write(ptsBuf, run, (size_t)rn * 8);
-                        dlsym_remote("CGPathAddLines", strokePath, 0, ptsBuf, 2, 0,0,0,0);
-                        calls++; drawn++;
+                    {
+                        limbCount++;
+                        if (curLayer >= 6 && curLayer <= 8) {
+                            remote_write(ptsBuf, run, (size_t)rn * 8);
+                            dlsym_remote("CGPathAddLines", rp, 0, ptsBuf, 2, 0,0,0,0);
+                            calls++; drawn++;
+                        }
+#if SB_DRAW_BONES
+                        else if (curLayer >= 3 && curLayer <= 5) {
+                            remote_write(ptsBuf, run, (size_t)rn * 8);
+                            dlsym_remote("CGPathAddLines", rp, 0, ptsBuf, 2, 0,0,0,0);
+                            calls++; drawn++;
+                        }
+#endif
                     }
                 }
 
                 if (isRect) {
-                    const bool isFill = SB_IS_FILL_LAYER(curLayer);
-                    if (isFill) {
-                        if (fillRectDoubles + 4 > (int)(sizeof(fillRectBuf)/sizeof(fillRectBuf[0]))) {
-                            remote_write(ptsBuf, fillRectBuf, (size_t)fillRectDoubles * 8);
-                            dlsym_remote("CGPathAddRects", fillPath, 0, ptsBuf,
-                                         fillRectDoubles / 4, 0, 0,0,0);
-                            calls++; drawn++;
-                            fillRectDoubles = 0;
-                        }
-                        fillRectBuf[fillRectDoubles++] = rx;
-                        fillRectBuf[fillRectDoubles++] = ry;
-                        fillRectBuf[fillRectDoubles++] = rw;
-                        fillRectBuf[fillRectDoubles++] = rh;
-                    } else {
-                        if (rectDoubles + 4 > (int)(sizeof(rectBuf)/sizeof(rectBuf[0]))) {
-                            remote_write(ptsBuf, rectBuf, (size_t)rectDoubles * 8);
-                            dlsym_remote("CGPathAddRects", strokePath, 0, ptsBuf,
-                                         rectDoubles / 4, 0, 0,0,0);
-                            calls++; drawn++;
-                            rectDoubles = 0;
-                        }
-                        rectBuf[rectDoubles++] = rx;
-                        rectBuf[rectDoubles++] = ry;
-                        rectBuf[rectDoubles++] = rw;
-                        rectBuf[rectDoubles++] = rh;
+                    if (rectDoubles + 4 > (int)(sizeof(rectBuf)/sizeof(rectBuf[0]))) {
+                        remote_write(ptsBuf, rectBuf, (size_t)rectDoubles * 8);
+                        dlsym_remote("CGPathAddRects", rp, 0, ptsBuf,
+                                     rectDoubles / 4, 0, 0,0,0);
+                        calls++; drawn++;
+                        rectDoubles = 0;
+                    }
+                    rectBuf[rectDoubles++] = rx;
+                    rectBuf[rectDoubles++] = ry;
+                    rectBuf[rectDoubles++] = rw;
+                    rectBuf[rectDoubles++] = rh;
+                    if (!haveFirstRect) {
+                        firstRect[0] = rx; firstRect[1] = ry;
+                        firstRect[2] = rw; firstRect[3] = rh;
+                        haveFirstRect = 1;
                     }
                     rectCount++;
                     continue;
                 }
 
-                uint64_t targetPath = SB_IS_FILL_LAYER(curLayer) ? fillPath : strokePath;
                 remote_write(ptsBuf, run, (size_t)rn * 8);
-                dlsym_remote("CGPathAddLines", targetPath, 0, ptsBuf, np, 0,0,0,0);
+                dlsym_remote("CGPathAddLines", rp, 0, ptsBuf, np, 0,0,0,0);
                 calls++; drawn++;
             }
 
             if (rectDoubles >= 4) {
                 remote_write(ptsBuf, rectBuf, (size_t)rectDoubles * 8);
-                dlsym_remote("CGPathAddRects", strokePath, 0, ptsBuf, rectDoubles / 4, 0,0,0,0);
-                calls++; drawn++;
-            }
-            if (fillRectDoubles >= 4) {
-                remote_write(ptsBuf, fillRectBuf, (size_t)fillRectDoubles * 8);
-                dlsym_remote("CGPathAddRects", fillPath, 0, ptsBuf, fillRectDoubles / 4, 0,0,0,0);
+                dlsym_remote("CGPathAddRects", rp, 0, ptsBuf, rectDoubles / 4, 0,0,0,0);
                 calls++; drawn++;
             }
 
             if (drawn > 0) {
-                sb_invoke_setpath(g_sbShape, strokePath);
-                if (r_is_objc_ptr(g_sbFillShape)) {
-                    sb_invoke_setpath(g_sbFillShape, fillPath);
-                }
+                sb_invoke_cached_main_raw();
                 g_sbSummaryUpdates++;
                 g_sbLastPublishUS = now_us();
                 g_sbRearmBackoffUS = 5000000ULL;
@@ -713,11 +712,40 @@ void SBRemotePushESPFrame(UIView *espView) {
                     if (nowS > s_sbLogUS) {
                         s_sbLogUS = nowS + 1000000ULL;
                         uint64_t pubMS = (now_us() - tPubStart) / 1000ULL;
-                        NSLog(@"[SB-PUSH] sub=%u rect=%u limb=%u calls=%llu ms=%llu upd=%llu",
+                        static uint64_t s_prevUpd = 0, s_prevUpdUS = 0;
+                        static uint64_t s_prevDrops = 0, s_prevHold = 0;
+                        uint64_t ups = 0, bdropRate = 0, holdMS = 0;
+                        {
+                            uint64_t tU = now_us();
+                            if (tU > s_prevUpdUS + 1000000ULL) {
+                                ups = g_sbSummaryUpdates - s_prevUpd;
+                                bdropRate = g_sbBusyDrops - s_prevDrops;
+                                holdMS = (g_sbHoldUS - s_prevHold) / 1000ULL;
+                                s_prevUpd = g_sbSummaryUpdates;
+                                s_prevDrops = g_sbBusyDrops;
+                                s_prevHold = g_sbHoldUS;
+                                s_prevUpdUS = tU;
+                            }
+                        }
+                        NSLog(@"[SB-PUSH] sub=%u rect=%u limb=%u calls=%llu ms=%llu "
+                              @"maxPts=%d nBig=%d r0=%.1f,%.1f,%.1f,%.1f ups=%llu "
+                              @"bdrops=%llu hold=%llums pts2=%d pts3=%d pts4=%d "
+                              @"pts58=%d pts932=%d pts33=%d hash=%u upd=%llu att=%llu skip=%llu "
+                              @"mergedSub=%u trunc=%u",
                               g_sbLastSubpaths, rectCount, limbCount,
                               (unsigned long long)g_sbLastCalls,
                               (unsigned long long)pubMS,
-                              (unsigned long long)g_sbSummaryUpdates);
+                              maxPts, nBig,
+                              firstRect[0], firstRect[1], firstRect[2], firstRect[3],
+                              (unsigned long long)ups,
+                              (unsigned long long)bdropRate,
+                              (unsigned long long)holdMS,
+                              c2, c3, c4, c5to8, c9to32, c33p,
+                              g_sbPathHash,
+                              (unsigned long long)g_sbSummaryUpdates,
+                              (unsigned long long)g_sbSummaryAttempts,
+                              (unsigned long long)g_sbSummarySkips,
+                              g_sbSubpathCount, nTrunc);
                     }
                 }
             }
@@ -736,15 +764,11 @@ void SBoardStopOverlay(void) {
     uint64_t win = g_sbWin;
     uint64_t path = g_sbPersistentPath;
     typedef struct { uint64_t v[SB_PATH_HOLD_FRAMES]; } SBRingBuf;
-    SBRingBuf ring, fillRing;
-    for (int k = 0; k < SB_PATH_HOLD_FRAMES; k++) {
-        ring.v[k] = g_sbPathRing[k];
-        fillRing.v[k] = g_sbFillPathRing[k];
-    }
+    SBRingBuf ring;
+    for (int k = 0; k < SB_PATH_HOLD_FRAMES; k++) ring.v[k] = g_sbPathRing[k];
     g_sbOverlayOn = NO;
     g_sbWin = 0;
     g_sbShape = 0;
-    g_sbFillShape = 0;
     g_sbCanvas = 0;
     pthread_mutex_unlock(&g_sbLock);
 
@@ -763,15 +787,14 @@ void SBoardStopOverlay(void) {
         }
 
         if (!hot) {
-            if (path) dlsym_remote("CGPathRelease", path, 0,0,0,0,0,0,0);
-            for (int k = 0; k < SB_PATH_HOLD_FRAMES; k++) {
-                if (ring.v[k] && ring.v[k] != path)
-                    dlsym_remote("CGPathRelease", ring.v[k], 0,0,0,0,0,0,0);
+            if (path) {
+                dlsym_remote("CGPathRelease", path, 0,0,0,0,0,0,0);
             }
-        }
-        for (int k = 0; k < SB_PATH_HOLD_FRAMES; k++) {
-            if (fillRing.v[k])
-                dlsym_remote("CGPathRelease", fillRing.v[k], 0,0,0,0,0,0,0);
+            for (int k = 0; k < SB_PATH_HOLD_FRAMES; k++) {
+                if (ring.v[k] && ring.v[k] != path) {
+                    dlsym_remote("CGPathRelease", ring.v[k], 0,0,0,0,0,0,0);
+                }
+            }
         }
 
         sb_forget_local_paint_state();
