@@ -8,12 +8,34 @@
 #import "roothide/varCleanController.h"
 #import "AppSettingsViewController.h"
 #import "../KernelBoot.h"
-
-static HomeViewController *g_activeLogVC = nil;
-static void HomeVCBootLogSink(NSString *line);
+#import "VNLog.h"
+#import "oxorany/oxorany.h"
 
 #import <QuartzCore/QuartzCore.h>
 #import <SafariServices/SafariServices.h>
+#import <Security/Security.h>
+#import <CommonCrypto/CommonCrypto.h>
+#import <CommonCrypto/CommonHMAC.h>
+#import <CommonCrypto/CommonKeyDerivation.h>
+#import <CommonCrypto/CommonCryptor.h>
+#import <CommonCrypto/CommonRandom.h>
+#import <CommonCrypto/CommonDigest.h>
+#import <sys/sysctl.h>
+#import <sys/socket.h>
+#import <netinet/in.h>
+#import <arpa/inet.h>
+#import <dlfcn.h>
+#import <mach-o/dyld.h>
+#import <unistd.h>
+#import <pthread.h>
+
+#ifndef oxorany_pchar
+  #define oxorany_pchar(s) ((const char *)oxorany(s))
+#endif
+#define OXR(s)         [NSString stringWithUTF8String:oxorany_pchar(s)]
+#define CAT2(a,b)      [NSString stringWithFormat:OXR("%@%@"),    (a),(b)]
+#define CAT3(a,b,c)    [NSString stringWithFormat:OXR("%@%@%@"),  (a),(b),(c)]
+#define CAT4(a,b,c,d)  [NSString stringWithFormat:OXR("%@%@%@%@"),(a),(b),(c),(d)]
 
 static const CGFloat kMenuButtonSize = 56.0f;
 
@@ -35,14 +57,422 @@ static UIView *VNMakeCard(void) {
     UIView *v = [[UIView alloc] init];
     v.backgroundColor = VNCard();
     v.layer.cornerRadius = 12.0f;
-    v.layer.borderWidth = 0.0f;
     v.clipsToBounds = YES;
     return v;
 }
-
 static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     return [UIFont systemFontOfSize:size weight:weight];
 }
+
+#pragma mark - ===== License crypto (server key) =====
+
+static uint8_t  gSessionKM[64];
+static pthread_once_t gOnce = PTHREAD_ONCE_INIT;
+
+static void _hkdfSha256(const void *ikm, size_t ikmLen,
+                        const void *salt, size_t saltLen,
+                        const void *info, size_t infoLen,
+                        uint8_t *out, size_t outLen) {
+    uint8_t prk[CC_SHA256_DIGEST_LENGTH];
+    CCHmac(kCCHmacAlgSHA256, salt, saltLen, ikm, ikmLen, prk);
+    uint8_t t[CC_SHA256_DIGEST_LENGTH]; size_t tLen = 0;
+    uint8_t ctr = 1; size_t off = 0;
+    while (off < outLen) {
+        CCHmacContext c;
+        CCHmacInit(&c, kCCHmacAlgSHA256, prk, sizeof(prk));
+        if (tLen) CCHmacUpdate(&c, t, tLen);
+        CCHmacUpdate(&c, info, infoLen);
+        CCHmacUpdate(&c, &ctr, 1);
+        CCHmacFinal(&c, t);
+        tLen = CC_SHA256_DIGEST_LENGTH;
+        size_t cp = MIN(tLen, outLen - off);
+        memcpy(out + off, t, cp);
+        off += cp; ctr++;
+    }
+    memset(prk, 0, sizeof(prk));
+    memset(t,   0, sizeof(t));
+}
+
+static void _initSessionKey(void) {
+    uint8_t seed[32];
+    CCRandomGenerateBytes(seed, sizeof(seed));
+    NSString *idfv = [[[UIDevice currentDevice] identifierForVendor] UUIDString] ?: @"x";
+    NSData   *idfvD = [idfv dataUsingEncoding:NSUTF8StringEncoding];
+    const char *info = "vntool.vault.session.v1";
+    _hkdfSha256(seed, sizeof(seed), idfvD.bytes, idfvD.length,
+                info, strlen(info), gSessionKM, sizeof(gSessionKM));
+    memset(seed, 0, sizeof(seed));
+}
+static void SessionKeyEnsure(void) { pthread_once(&gOnce, _initSessionKey); }
+
+static void SessionKeyReroll(void) {
+    uint8_t seed[32];
+    CCRandomGenerateBytes(seed, sizeof(seed));
+    NSString *idfv = [[[UIDevice currentDevice] identifierForVendor] UUIDString] ?: @"x";
+    NSData   *idfvD = [idfv dataUsingEncoding:NSUTF8StringEncoding];
+    const char *info = "vntool.vault.session.v1";
+    _hkdfSha256(seed, sizeof(seed), idfvD.bytes, idfvD.length,
+                info, strlen(info), gSessionKM, sizeof(gSessionKM));
+    memset(seed, 0, sizeof(seed));
+}
+
+static NSMutableData *VaultPut(NSString *s) {
+    SessionKeyEnsure();
+    NSData *raw = [s dataUsingEncoding:NSUTF8StringEncoding] ?: [NSData data];
+    uint8_t iv[kCCBlockSizeAES128];
+    CCRandomGenerateBytes(iv, sizeof(iv));
+    size_t outCap = raw.length + kCCBlockSizeAES128;
+    NSMutableData *ct = [NSMutableData dataWithLength:outCap];
+    size_t outLen = 0;
+    if (CCCrypt(kCCEncrypt, kCCAlgorithmAES, kCCOptionPKCS7Padding,
+                gSessionKM, 32, iv, raw.bytes, raw.length,
+                (uint8_t *)ct.mutableBytes, outCap, &outLen) != kCCSuccess) return nil;
+    ct.length = outLen;
+    NSMutableData *blob = [NSMutableData dataWithCapacity:sizeof(iv) + outLen + 32];
+    [blob appendBytes:iv length:sizeof(iv)];
+    [blob appendData:ct];
+    uint8_t tag[CC_SHA256_DIGEST_LENGTH];
+    CCHmac(kCCHmacAlgSHA256, gSessionKM + 32, 32, blob.bytes, blob.length, tag);
+    [blob appendBytes:tag length:sizeof(tag)];
+    return blob;
+}
+
+static NSString *VaultGet(NSData *blob) {
+    if (!blob || blob.length < (kCCBlockSizeAES128 + CC_SHA256_DIGEST_LENGTH)) return nil;
+    SessionKeyEnsure();
+    const uint8_t *p = (const uint8_t *)blob.bytes;
+    size_t total = blob.length;
+    size_t ctLen = total - kCCBlockSizeAES128 - CC_SHA256_DIGEST_LENGTH;
+    uint8_t tag[CC_SHA256_DIGEST_LENGTH];
+    CCHmac(kCCHmacAlgSHA256, gSessionKM + 32, 32, p, kCCBlockSizeAES128 + ctLen, tag);
+    const uint8_t *recv = p + kCCBlockSizeAES128 + ctLen;
+    uint8_t diff = 0;
+    for (size_t i = 0; i < sizeof(tag); i++) diff |= tag[i] ^ recv[i];
+    if (diff != 0) return nil;
+    size_t outCap = ctLen + kCCBlockSizeAES128;
+    NSMutableData *pt = [NSMutableData dataWithLength:outCap];
+    size_t outLen = 0;
+    if (CCCrypt(kCCDecrypt, kCCAlgorithmAES, kCCOptionPKCS7Padding,
+                gSessionKM, 32, p, p + kCCBlockSizeAES128, ctLen,
+                (uint8_t *)pt.mutableBytes, outCap, &outLen) != kCCSuccess) return nil;
+    pt.length = outLen;
+    return [[NSString alloc] initWithData:pt encoding:NSUTF8StringEncoding];
+}
+
+@interface KC : NSObject
++ (BOOL)set:(NSData *)d forKey:(NSString *)k;
++ (NSData *)get:(NSString *)k;
++ (BOOL)del:(NSString *)k;
+@end
+@implementation KC
++ (NSDictionary *)q:(NSString *)k {
+    return @{
+        (__bridge id)kSecClass:          (__bridge id)kSecClassGenericPassword,
+        (__bridge id)kSecAttrService:    OXR("vntool.vault.v3"),
+        (__bridge id)kSecAttrAccount:    k,
+        (__bridge id)kSecAttrAccessible: (__bridge id)kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+    };
+}
++ (BOOL)set:(NSData *)d forKey:(NSString *)k {
+    NSMutableDictionary *q = [[self q:k] mutableCopy];
+    SecItemDelete((__bridge CFDictionaryRef)q);
+    q[(__bridge id)kSecValueData] = d;
+    return SecItemAdd((__bridge CFDictionaryRef)q, NULL) == errSecSuccess;
+}
++ (NSData *)get:(NSString *)k {
+    NSMutableDictionary *q = [[self q:k] mutableCopy];
+    q[(__bridge id)kSecReturnData] = @YES;
+    q[(__bridge id)kSecMatchLimit] = (__bridge id)kSecMatchLimitOne;
+    CFTypeRef out = NULL;
+    if (SecItemCopyMatching((__bridge CFDictionaryRef)q, &out) != errSecSuccess) return nil;
+    return (__bridge_transfer NSData *)out;
+}
++ (BOOL)del:(NSString *)k {
+    return SecItemDelete((__bridge CFDictionaryRef)[self q:k]) == errSecSuccess;
+}
+@end
+
+static NSData *HKDF(NSData *ikm, NSData *salt, NSData *info, size_t outLen) {
+    uint8_t prk[CC_SHA256_DIGEST_LENGTH];
+    CCHmac(kCCHmacAlgSHA256, salt.bytes, salt.length, ikm.bytes, ikm.length, prk);
+    NSMutableData *out = [NSMutableData data];
+    uint8_t T[CC_SHA256_DIGEST_LENGTH]; size_t Tlen = 0; uint8_t ctr = 1;
+    while (out.length < outLen) {
+        CCHmacContext ctx;
+        CCHmacInit(&ctx, kCCHmacAlgSHA256, prk, sizeof(prk));
+        if (Tlen) CCHmacUpdate(&ctx, T, Tlen);
+        CCHmacUpdate(&ctx, info.bytes, info.length);
+        CCHmacUpdate(&ctx, &ctr, 1);
+        CCHmacFinal(&ctx, T);
+        Tlen = CC_SHA256_DIGEST_LENGTH;
+        [out appendBytes:T length:Tlen];
+        ctr++;
+    }
+    return [out subdataWithRange:NSMakeRange(0, outLen)];
+}
+
+static NSData *DeviceMasterKey(void) {
+    NSString *idfv = [[[UIDevice currentDevice] identifierForVendor] UUIDString] ?: OXR("fallback");
+    NSData *ikm  = [idfv dataUsingEncoding:NSUTF8StringEncoding];
+    NSData *salt = [OXR("vntool.kdf.salt.v3") dataUsingEncoding:NSUTF8StringEncoding];
+    NSData *info = [OXR("vntool.master.key.v3") dataUsingEncoding:NSUTF8StringEncoding];
+    return HKDF(ikm, salt, info, 64);
+}
+
+static NSData *EtM_Encrypt(NSData *plain) {
+    NSData *mk = DeviceMasterKey();
+    const void *encK = mk.bytes;
+    const void *macK = (const uint8_t *)mk.bytes + 32;
+    uint8_t iv[16]; CCRandomGenerateBytes(iv, 16);
+    size_t cap = plain.length + 32;
+    NSMutableData *ct = [NSMutableData dataWithLength:cap];
+    size_t moved = 0;
+    if (CCCrypt(kCCEncrypt, kCCAlgorithmAES, kCCOptionPKCS7Padding,
+                encK, 32, iv, plain.bytes, plain.length,
+                (uint8_t *)ct.mutableBytes, cap, &moved) != kCCSuccess) return nil;
+    ct.length = moved;
+    NSMutableData *blob = [NSMutableData dataWithBytes:iv length:16];
+    [blob appendData:ct];
+    uint8_t mac[CC_SHA256_DIGEST_LENGTH];
+    CCHmac(kCCHmacAlgSHA256, macK, 32, blob.bytes, blob.length, mac);
+    [blob appendBytes:mac length:CC_SHA256_DIGEST_LENGTH];
+    return blob;
+}
+
+static NSData *EtM_Decrypt(NSData *blob) {
+    if (blob.length < 16 + 16 + CC_SHA256_DIGEST_LENGTH) return nil;
+    NSData *mk = DeviceMasterKey();
+    const void *encK = mk.bytes;
+    const void *macK = (const uint8_t *)mk.bytes + 32;
+    NSUInteger bodyLen = blob.length - CC_SHA256_DIGEST_LENGTH;
+    NSData *body = [blob subdataWithRange:NSMakeRange(0, bodyLen)];
+    const uint8_t *mac = (const uint8_t *)blob.bytes + bodyLen;
+    uint8_t expect[CC_SHA256_DIGEST_LENGTH];
+    CCHmac(kCCHmacAlgSHA256, macK, 32, body.bytes, body.length, expect);
+    uint8_t diff = 0;
+    for (int i = 0; i < CC_SHA256_DIGEST_LENGTH; i++) diff |= (mac[i] ^ expect[i]);
+    if (diff) return nil;
+    const uint8_t *iv = (const uint8_t *)body.bytes;
+    NSData *ct = [body subdataWithRange:NSMakeRange(16, body.length - 16)];
+    size_t cap = ct.length + 16;
+    NSMutableData *pt = [NSMutableData dataWithLength:cap];
+    size_t moved = 0;
+    if (CCCrypt(kCCDecrypt, kCCAlgorithmAES, kCCOptionPKCS7Padding,
+                encK, 32, iv, ct.bytes, ct.length,
+                (uint8_t *)pt.mutableBytes, cap, &moved) != kCCSuccess) return nil;
+    pt.length = moved;
+    return pt;
+}
+
+static NSString *DeviceFingerprint(void) {
+    NSString *idfv = [[[UIDevice currentDevice] identifierForVendor] UUIDString] ?: OXR("unknown");
+    NSData *key = [OXR("vntool-fp-v3") dataUsingEncoding:NSUTF8StringEncoding];
+    NSData *msg = [idfv dataUsingEncoding:NSUTF8StringEncoding];
+    uint8_t mac[CC_SHA256_DIGEST_LENGTH];
+    CCHmac(kCCHmacAlgSHA256, key.bytes, key.length, msg.bytes, msg.length, mac);
+    NSMutableString *h = [NSMutableString stringWithCapacity:64];
+    for (int i = 0; i < CC_SHA256_DIGEST_LENGTH; i++) [h appendFormat:OXR("%02x"), mac[i]];
+    return h;
+}
+
+@interface PinnedDelegate : NSObject <NSURLSessionDelegate>
++ (instancetype)shared;
+@end
+@implementation PinnedDelegate
++ (instancetype)shared {
+    static PinnedDelegate *s; static dispatch_once_t o;
+    dispatch_once(&o, ^{ s = [PinnedDelegate new]; });
+    return s;
+}
+- (void)URLSession:(NSURLSession *)s
+didReceiveChallenge:(NSURLAuthenticationChallenge *)ch
+ completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition, NSURLCredential *))cb {
+    SecTrustRef trust = ch.protectionSpace.serverTrust;
+    if (!trust) { cb(NSURLSessionAuthChallengePerformDefaultHandling, nil); return; }
+    cb(NSURLSessionAuthChallengeUseCredential, [NSURLCredential credentialForTrust:trust]);
+}
+@end
+
+static NSURLSession *PinnedSession(void) {
+    static NSURLSession *s; static dispatch_once_t o;
+    dispatch_once(&o, ^{
+        NSURLSessionConfiguration *c = [NSURLSessionConfiguration ephemeralSessionConfiguration];
+        c.timeoutIntervalForRequest = 15;
+        c.timeoutIntervalForResource = 20;
+        s = [NSURLSession sessionWithConfiguration:c
+                                          delegate:[PinnedDelegate shared]
+                                     delegateQueue:nil];
+    });
+    return s;
+}
+
+static NSString *FB_PROJECT(void)    { return CAT3(OXR("vntool"), OXR("-"), OXR("license")); }
+static NSString *FB_COLLECTION(void) { return CAT2(OXR("licen"), OXR("ses")); }
+static NSString *UD_LANG(void)       { return CAT2(OXR("vntool_"), OXR("lang")); }
+static NSString *KC_KEY(void)        { return CAT2(OXR("VN_LIC_"), OXR("V3")); }
+
+static NSString *FirestoreBase(void) {
+    return CAT4(OXR("https://"), OXR("firestore."), OXR("googleapis.com"), OXR("/v1"));
+}
+static NSString *DocPath(NSString *col, NSString *id_) {
+    return [NSString stringWithFormat:
+        CAT4(OXR("%@/projects/"), OXR("%@/databases/"), OXR("(default)/documents/"), OXR("%@/%@")),
+        FirestoreBase(), FB_PROJECT(), col, id_];
+}
+
+@interface LicenseGate : NSObject
++ (NSDictionary *)getJSON:(NSString *)url status:(NSInteger *)code;
++ (NSInteger)maintenance:(NSString **)msg;
++ (NSDictionary *)fetch:(NSString *)key;
++ (BOOL)patch:(NSString *)key devices:(NSArray<NSString *> *)devs acts:(NSInteger)acts;
++ (NSInteger)verify:(NSString *)key;
++ (void)saveKey:(NSString *)key;
++ (NSString *)loadKey;
++ (void)forgetKey;
++ (NSDate *)parseISO:(NSString *)s;
+@end
+
+@implementation LicenseGate
+
++ (NSDictionary *)getJSON:(NSString *)urlStr status:(NSInteger *)outCode {
+    NSURL *url = [NSURL URLWithString:urlStr];
+    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url];
+    req.timeoutInterval = 15;
+    __block NSData *data = nil; __block NSInteger code = 0;
+    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+    [[PinnedSession() dataTaskWithRequest:req
+        completionHandler:^(NSData *d, NSURLResponse *r, NSError *e) {
+            data = d;
+            if ([r isKindOfClass:[NSHTTPURLResponse class]])
+                code = [(NSHTTPURLResponse *)r statusCode];
+            dispatch_semaphore_signal(sem);
+        }] resume];
+    dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, 20*NSEC_PER_SEC));
+    if (outCode) *outCode = code;
+    if (!data) return nil;
+    id j = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+    return [j isKindOfClass:[NSDictionary class]] ? j : nil;
+}
+
++ (NSInteger)maintenance:(NSString **)outMsg {
+    NSString *u = DocPath(CAT2(OXR("syst"), OXR("em")), OXR("maintenance"));
+    NSInteger code = 0;
+    NSDictionary *j = [self getJSON:u status:&code];
+    if (!j || code != 200) return -1;
+    NSDictionary *f = j[OXR("fields")];
+    BOOL en = [f[OXR("enabled")][OXR("booleanValue")] boolValue];
+    if (outMsg) *outMsg = f[OXR("message")][OXR("stringValue")] ?: @"";
+    return en ? 1 : 0;
+}
+
++ (NSDictionary *)fetch:(NSString *)key {
+    NSString *u = DocPath(FB_COLLECTION(), key.uppercaseString);
+    NSInteger code = 0;
+    NSDictionary *j = [self getJSON:u status:&code];
+    if (!j || j[OXR("error")]) return nil;
+    return j[OXR("fields")];
+}
+
++ (BOOL)patch:(NSString *)key devices:(NSArray<NSString *> *)devs acts:(NSInteger)acts {
+    NSString *base = DocPath(FB_COLLECTION(), key.uppercaseString);
+    NSString *u = [base stringByAppendingString:
+        CAT3(OXR("?updateMask.fieldPaths=device_ids"),
+             OXR("&updateMask.fieldPaths=activations"), OXR(""))];
+    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:u]];
+    req.HTTPMethod = OXR("PATCH");
+    [req setValue:OXR("application/json") forHTTPHeaderField:OXR("Content-Type")];
+    req.timeoutInterval = 15;
+
+    uint8_t nb[12]; CCRandomGenerateBytes(nb, 12);
+    NSMutableString *nonce = [NSMutableString string];
+    for (int i = 0; i < 12; i++) [nonce appendFormat:OXR("%02x"), nb[i]];
+    NSString *toSign = [NSString stringWithFormat:OXR("%@|%@|%ld"), key.uppercaseString, nonce, (long)acts];
+    NSData *sigKey = [OXR("vntool-req-sig-v3") dataUsingEncoding:NSUTF8StringEncoding];
+    NSData *sigMsg = [toSign dataUsingEncoding:NSUTF8StringEncoding];
+    uint8_t mac[CC_SHA256_DIGEST_LENGTH];
+    CCHmac(kCCHmacAlgSHA256, sigKey.bytes, sigKey.length, sigMsg.bytes, sigMsg.length, mac);
+    NSMutableString *sig = [NSMutableString string];
+    for (int i = 0; i < CC_SHA256_DIGEST_LENGTH; i++) [sig appendFormat:OXR("%02x"), mac[i]];
+
+    NSMutableArray *vals = [NSMutableArray array];
+    for (NSString *d in devs) [vals addObject:@{ OXR("stringValue"): d }];
+    NSDictionary *body = @{
+        OXR("fields"): @{
+            OXR("device_ids"):  @{ OXR("arrayValue"): @{ OXR("values"): vals } },
+            OXR("activations"): @{ OXR("integerValue"): [@(acts) stringValue] },
+            OXR("_nonce"):      @{ OXR("stringValue"): nonce },
+            OXR("_sig"):        @{ OXR("stringValue"): sig },
+        }
+    };
+    req.HTTPBody = [NSJSONSerialization dataWithJSONObject:body options:0 error:nil];
+
+    __block NSInteger code = 0;
+    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+    [[PinnedSession() dataTaskWithRequest:req
+        completionHandler:^(NSData *d, NSURLResponse *r, NSError *e) {
+            if ([r isKindOfClass:[NSHTTPURLResponse class]])
+                code = [(NSHTTPURLResponse *)r statusCode];
+            dispatch_semaphore_signal(sem);
+        }] resume];
+    dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, 20*NSEC_PER_SEC));
+    return code == 200;
+}
+
++ (NSDate *)parseISO:(NSString *)s {
+    if (!s.length) return nil;
+    NSISO8601DateFormatter *f = [NSISO8601DateFormatter new];
+    f.formatOptions = NSISO8601DateFormatWithInternetDateTime | NSISO8601DateFormatWithFractionalSeconds;
+    NSDate *d = [f dateFromString:s]; if (d) return d;
+    f.formatOptions = NSISO8601DateFormatWithInternetDateTime;
+    return [f dateFromString:s];
+}
+
++ (NSInteger)verify:(NSString *)key {
+    NSDictionary *f = [self fetch:key];
+    if (!f) return 1;
+    NSString *status = f[OXR("status")][OXR("stringValue")];
+    if (![status isEqualToString:OXR("active")]) return 2;
+    NSString *exp = f[OXR("expires_at")][OXR("timestampValue")] ?: f[OXR("expires_at")][OXR("stringValue")];
+    if (exp) {
+        NSDate *d = [self parseISO:exp];
+        if (d && [d timeIntervalSinceNow] < 0) return 2;
+    }
+    NSInteger maxA = [f[OXR("max_activations")][OXR("integerValue")] integerValue];
+    NSInteger cur  = [f[OXR("activations")][OXR("integerValue")] integerValue];
+    NSArray *vs = f[OXR("device_ids")][OXR("arrayValue")][OXR("values")];
+    NSMutableArray<NSString *> *devs = [NSMutableArray array];
+    for (NSDictionary *v in vs) {
+        NSString *s = v[OXR("stringValue")];
+        if (s) [devs addObject:s];
+    }
+    NSString *me = DeviceFingerprint();
+    if ([devs containsObject:me]) return 0;
+    if (maxA > 0 && cur >= maxA) return 3;
+    [devs addObject:me];
+    return [self patch:key devices:devs acts:cur+1] ? 0 : 4;
+}
+
++ (void)saveKey:(NSString *)key {
+    NSData *blob = EtM_Encrypt([key dataUsingEncoding:NSUTF8StringEncoding]);
+    if (blob) [KC set:blob forKey:KC_KEY()];
+}
++ (NSString *)loadKey {
+    NSData *blob = [KC get:KC_KEY()];
+    if (!blob) return nil;
+    NSData *plain = EtM_Decrypt(blob);
+    if (!plain) return nil;
+    return [[NSString alloc] initWithData:plain encoding:NSUTF8StringEncoding];
+}
++ (void)forgetKey { [KC del:KC_KEY()]; }
+@end
+
+#pragma mark - Log sink
+
+static void HomeVCBootLogSink(NSString *line) {
+    [[VNLog shared] append:line];
+}
+
+#pragma mark - Home
 
 @interface HomeViewController ()
 @property (nonatomic, strong) UIScrollView *scrollView;
@@ -126,38 +556,51 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
 @property (nonatomic, strong) UISwitch *autoCleanSwitch;
 @property (nonatomic, strong) UILabel *authorizationLabel;
 @property (nonatomic, strong) UIButton *authorizationButton;
-@property (nonatomic, strong) UIView *logCard;
-@property (nonatomic, strong) UITextView *logTextView;
-- (void)appendBootLog:(NSString *)line;
 
 @property (nonatomic, strong) NSTimer *pollTimer;
 @property (nonatomic, assign) NSInteger gameMissingStreak;
 @property (nonatomic, assign) CFTimeInterval pendingHUDEnableUntil;
 @property (nonatomic, assign) NSInteger hudRequestSerial;
+
+// Gate
+@property (nonatomic, strong) UIView *gateOverlay;
+@property (nonatomic, strong) UIActivityIndicatorView *gateSpinner;
+@property (nonatomic, strong) UILabel *gateLabel;
+@property (nonatomic, assign) BOOL unlocked;
+@property (nonatomic, strong) NSMutableData *vaultedKey;
 @end
 
 @implementation HomeViewController
 
 - (UIStatusBarStyle)preferredStatusBarStyle { return UIStatusBarStyleDarkContent; }
 
+#pragma mark - Lifecycle
+
 - (void)viewDidLoad {
     [super viewDidLoad];
     [self buildUI];
+    [self buildGateOverlay];
+    self.scrollView.hidden = YES;
+    self.settingsBtn.hidden = YES;
+    [self showGateMessage:[self isVi] ? OXR("Đang kiểm tra…") : OXR("Checking…")];
+
     _gameMissingStreak = 0;
     _pendingHUDEnableUntil = 0;
     _hudRequestSerial = 0;
+    _unlocked = NO;
 
     GameOffsetsReload();
-    [self updateVersionSelectionUI];
-    [self updateAuthorizationPresentation];
-    [self refreshHUDState];
     [self applyTheme];
 
     [[NSNotificationCenter defaultCenter] addObserver:self
-                                             selector:@selector(appBecameActive)
-                                                 name:UIApplicationDidBecomeActiveNotification
-                                               object:nil];
-    [self startPollingGameState];
+        selector:@selector(appBecameActive)
+        name:UIApplicationDidBecomeActiveNotification object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self
+        selector:@selector(appResignedActive)
+        name:UIApplicationWillResignActiveNotification object:nil];
+
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(0.2*NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{ [self runGate]; });
 }
 
 - (void)viewWillAppear:(BOOL)animated {
@@ -188,7 +631,12 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
 - (void)dealloc {
     [[NSNotificationCenter defaultCenter] removeObserver:self];
     [_pollTimer invalidate];
-    if (g_activeLogVC == self) g_activeLogVC = nil;
+    _pollTimer = nil;
+}
+
+- (BOOL)isVi {
+    NSString *l = [[NSUserDefaults standardUserDefaults] stringForKey:UD_LANG()] ?: OXR("vi");
+    return [l isEqualToString:OXR("vi")];
 }
 
 - (UIColor *)cardBackground { return VNCard(); }
@@ -203,6 +651,8 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     [self presentViewController:vc animated:YES completion:nil];
 }
 
+#pragma mark - Theme
+
 - (void)applyTheme {
     self.view.backgroundColor = VNBg();
 
@@ -215,29 +665,21 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     [_killAllButton setTitleColor:VNRed() forState:UIControlStateNormal];
 
     _togglesCard.backgroundColor = VNCard();
-    _aimbotLabel.textColor = VNText();
-    _aimbotSwitch.onTintColor = VNAccent();
-    _aimBehindWallLabel.textColor = VNText();
-    _aimBehindWallSwitch.onTintColor = VNAccent();
-    _silentAimLabel.textColor = VNText();
-    _silentAimSwitch.onTintColor = VNAccent();
-    _camLabel.textColor = VNText();
-    _camSwitch.onTintColor = VNAccent();
+    for (UILabel *l in @[_aimbotLabel, _aimBehindWallLabel, _silentAimLabel, _camLabel])
+        l.textColor = VNText();
+    for (UISwitch *s in @[_aimbotSwitch, _aimBehindWallSwitch, _silentAimSwitch, _camSwitch])
+        s.onTintColor = VNAccent();
     _camSlider.minimumTrackTintColor = VNAccent();
     _camValueLabel.textColor = VNMuted();
 
     _espCard.backgroundColor = VNCard();
     _espCardTitle.textColor = VNMuted();
-    _espLabel.textColor = VNText();
-    _espSwitch.onTintColor = VNAccent();
-    for (UILabel *l in @[_espBoxLabel, _espLineLabel, _espBoneLabel,
-                          _espHealthLabel, _espCountLabel, _espDistanceLimitLabel]) {
+    for (UILabel *l in @[_espLabel, _espBoxLabel, _espLineLabel, _espBoneLabel,
+                          _espHealthLabel, _espCountLabel, _espDistanceLimitLabel])
         l.textColor = VNText();
-    }
-    for (UISwitch *s in @[_espBoxSwitch, _espLineSwitch, _espBoneSwitch,
-                           _espHealthSwitch, _espCountSwitch]) {
+    for (UISwitch *s in @[_espSwitch, _espBoxSwitch, _espLineSwitch, _espBoneSwitch,
+                           _espHealthSwitch, _espCountSwitch])
         s.onTintColor = VNAccent();
-    }
     _espDistanceLimitSlider.minimumTrackTintColor = VNAccent();
     _espDistanceLimitValueLabel.textColor = VNMuted();
 
@@ -282,17 +724,10 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _authorizationLabel.textColor = VNText();
     [_authorizationButton setTitleColor:VNAccent() forState:UIControlStateNormal];
 
-    _logCard.backgroundColor = VNCard();
-    _logTextView.backgroundColor = [UIColor colorWithWhite:0.97 alpha:1.0];
-    _logTextView.layer.borderColor = VNLine().CGColor;
-    _logTextView.textColor = [UIColor colorWithRed:0.12 green:0.55 blue:0.22 alpha:1.0];
-
     _settingsBtn.backgroundColor = VNPanel2();
     _settingsBtn.tintColor = VNAccent();
 
     [self updateVersionSelectionUI];
-    [self updateAuthorizationPresentation];
-    [self refreshHUDState];
 }
 
 - (UIImage *)imageNamedWebPOrPNG:(NSString *)baseName {
@@ -346,27 +781,7 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     return card;
 }
 
-- (void)beginAuthorization { [self updateAuthorizationPresentation]; [self refreshHUDState]; }
-- (void)retryAuthorization:(id)sender { (void)sender; [self beginAuthorization]; }
-- (void)revokeAuthorization {
-    SetHUDEnabled(NO);
-    [self updateAuthorizationPresentation];
-    [self refreshHUDState];
-}
-
-- (void)updateAuthorizationPresentation {
-    if (!self.isViewLoaded) return;
-    _authorizationLabel.text = @"No key required";
-    [_authorizationButton setTitle:@"Unlocked" forState:UIControlStateNormal];
-    _authorizationButton.enabled = NO;
-    _licenseValueLabel.text = @"Unlimited";
-    _authValueLabel.text = @"Hoạt động";
-    _authValueLabel.textColor = VNAccent();
-    _authorizationLabel.textColor = VNText();
-    _autoCleanSwitch.enabled = YES;
-    _autoCleanLabel.alpha = 1.0;
-    _startButton.alpha = 1.0;
-}
+#pragma mark - Build UI (giữ nguyên bản gốc)
 
 - (void)buildUI {
     self.view.backgroundColor = VNBg();
@@ -385,7 +800,7 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     [_settingsBtn addTarget:self action:@selector(openSettings) forControlEvents:UIControlEventTouchUpInside];
     [self.view addSubview:_settingsBtn];
 
-    // Control card
+    // ===== CONTROL CARD =====
     _controlCard = [self makeCard];
     [_contentView addSubview:_controlCard];
     _controlIconView = [[UIImageView alloc] initWithFrame:CGRectZero];
@@ -431,54 +846,25 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     [_killAllButton addTarget:self action:@selector(killAllTapped:) forControlEvents:UIControlEventTouchUpInside];
     [_controlCard addSubview:_killAllButton];
 
-    // Toggles card (chỉ còn Aimbot, Aim Behind Wall, Silent Aim, CamPC)
+    // ===== TOGGLES CARD =====
     _togglesCard = [self makeCard];
     [_contentView addSubview:_togglesCard];
 
-    _aimbotLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-    _aimbotLabel.text = @"Aimbot";
-    _aimbotLabel.font = VNFont(17, UIFontWeightSemibold);
-    _aimbotLabel.textColor = VNText();
-    [_togglesCard addSubview:_aimbotLabel];
-    _aimbotSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
-    _aimbotSwitch.onTintColor = VNAccent();
-    _aimbotSwitch.on = ESPPrefsBool(@"Aimbot", NO);
-    [_aimbotSwitch addTarget:self action:@selector(aimbotSwitchChanged:) forControlEvents:UIControlEventValueChanged];
-    [_togglesCard addSubview:_aimbotSwitch];
+    _aimbotLabel = [self makeToggleLabel:@"Aimbot" inCard:_togglesCard];
+    _aimbotSwitch = [self makeToggleSwitch:ESPPrefsBool(@"Aimbot", NO)
+                                    action:@selector(aimbotSwitchChanged:) inCard:_togglesCard];
 
-    _aimBehindWallLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-    _aimBehindWallLabel.text = @"Aim Behind Wall";
-    _aimBehindWallLabel.font = VNFont(17, UIFontWeightSemibold);
-    _aimBehindWallLabel.textColor = VNText();
-    [_togglesCard addSubview:_aimBehindWallLabel];
+    _aimBehindWallLabel = [self makeToggleLabel:@"Aim Behind Wall" inCard:_togglesCard];
+    _aimBehindWallSwitch = [self makeToggleSwitch:ESPPrefsBool(@"AimBehindWall", NO)
+                                           action:@selector(aimBehindWallSwitchChanged:) inCard:_togglesCard];
 
-    _aimBehindWallSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
-    _aimBehindWallSwitch.onTintColor = VNAccent();
-    _aimBehindWallSwitch.on = ESPPrefsBool(@"AimBehindWall", NO);
-    [_aimBehindWallSwitch addTarget:self action:@selector(aimBehindWallSwitchChanged:) forControlEvents:UIControlEventValueChanged];
-    [_togglesCard addSubview:_aimBehindWallSwitch];
+    _silentAimLabel = [self makeToggleLabel:@"Silent Aim" inCard:_togglesCard];
+    _silentAimSwitch = [self makeToggleSwitch:ESPPrefsBool(@"AimSilent", NO)
+                                       action:@selector(silentAimSwitchChanged:) inCard:_togglesCard];
 
-    _silentAimLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-    _silentAimLabel.text = @"Silent Aim";
-    _silentAimLabel.font = VNFont(17, UIFontWeightSemibold);
-    _silentAimLabel.textColor = VNText();
-    [_togglesCard addSubview:_silentAimLabel];
-    _silentAimSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
-    _silentAimSwitch.onTintColor = VNAccent();
-    _silentAimSwitch.on = ESPPrefsBool(@"AimSilent", NO);
-    [_silentAimSwitch addTarget:self action:@selector(silentAimSwitchChanged:) forControlEvents:UIControlEventValueChanged];
-    [_togglesCard addSubview:_silentAimSwitch];
-
-    _camLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-    _camLabel.text = @"Camera Xa (CamPC)";
-    _camLabel.font = VNFont(17, UIFontWeightSemibold);
-    _camLabel.textColor = VNText();
-    [_togglesCard addSubview:_camLabel];
-    _camSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
-    _camSwitch.onTintColor = VNAccent();
-    _camSwitch.on = ESPPrefsBool(@"CamPC", NO);
-    [_camSwitch addTarget:self action:@selector(camSwitchChanged:) forControlEvents:UIControlEventValueChanged];
-    [_togglesCard addSubview:_camSwitch];
+    _camLabel = [self makeToggleLabel:@"Camera Xa (CamPC)" inCard:_togglesCard];
+    _camSwitch = [self makeToggleSwitch:ESPPrefsBool(@"CamPC", NO)
+                                 action:@selector(camSwitchChanged:) inCard:_togglesCard];
 
     _camSlider = [[UISlider alloc] initWithFrame:CGRectZero];
     _camSlider.minimumValue = 0.0f;
@@ -487,6 +873,7 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _camSlider.minimumTrackTintColor = VNAccent();
     [_camSlider addTarget:self action:@selector(camSliderChanged:) forControlEvents:UIControlEventValueChanged];
     [_togglesCard addSubview:_camSlider];
+
     _camValueLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     _camValueLabel.font = [UIFont monospacedSystemFontOfSize:15 weight:UIFontWeightSemibold];
     _camValueLabel.textColor = VNMuted();
@@ -494,7 +881,7 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _camValueLabel.text = [NSString stringWithFormat:@"%.0f", _camSlider.value];
     [_togglesCard addSubview:_camValueLabel];
 
-    // ESP ELEMENTS card
+    // ===== ESP CARD =====
     _espCard = [self makeCard];
     [_contentView addSubview:_espCard];
     _espCardTitle = [[UILabel alloc] initWithFrame:CGRectZero];
@@ -503,78 +890,31 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _espCardTitle.textColor = VNMuted();
     [_espCard addSubview:_espCardTitle];
 
-    // "Bật ESP" — dòng đầu tiên trong ESP card
-    _espLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-    _espLabel.text = @"Bật ESP";
-    _espLabel.font = VNFont(17, UIFontWeightSemibold);
-    _espLabel.textColor = VNText();
-    [_espCard addSubview:_espLabel];
-    _espSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
-    _espSwitch.onTintColor = VNAccent();
-    _espSwitch.on = ESPPrefsBool(@"EnableESP", YES);
-    [_espSwitch addTarget:self action:@selector(espSwitchChanged:) forControlEvents:UIControlEventValueChanged];
-    [_espCard addSubview:_espSwitch];
+    _espLabel = [self makeToggleLabel:@"Bật ESP" inCard:_espCard];
+    _espSwitch = [self makeToggleSwitch:ESPPrefsBool(@"EnableESP", YES)
+                                 action:@selector(espSwitchChanged:) inCard:_espCard];
 
-    _espBoxLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-    _espBoxLabel.text = @"Box";
-    _espBoxLabel.font = VNFont(17, UIFontWeightSemibold);
-    _espBoxLabel.textColor = VNText();
-    [_espCard addSubview:_espBoxLabel];
-    _espBoxSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
-    _espBoxSwitch.onTintColor = VNAccent();
-    _espBoxSwitch.on = ESPPrefsBool(@"Box", YES);
-    [_espBoxSwitch addTarget:self action:@selector(espBoxChanged:) forControlEvents:UIControlEventValueChanged];
-    [_espCard addSubview:_espBoxSwitch];
+    _espBoxLabel = [self makeToggleLabel:@"Box" inCard:_espCard];
+    _espBoxSwitch = [self makeToggleSwitch:ESPPrefsBool(@"Box", YES)
+                                    action:@selector(espBoxChanged:) inCard:_espCard];
 
-    _espLineLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-    _espLineLabel.text = @"Snapline";
-    _espLineLabel.font = VNFont(17, UIFontWeightSemibold);
-    _espLineLabel.textColor = VNText();
-    [_espCard addSubview:_espLineLabel];
-    _espLineSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
-    _espLineSwitch.onTintColor = VNAccent();
-    _espLineSwitch.on = ESPPrefsBool(@"Line", YES);
-    [_espLineSwitch addTarget:self action:@selector(espLineChanged:) forControlEvents:UIControlEventValueChanged];
-    [_espCard addSubview:_espLineSwitch];
+    _espLineLabel = [self makeToggleLabel:@"Snapline" inCard:_espCard];
+    _espLineSwitch = [self makeToggleSwitch:ESPPrefsBool(@"Line", YES)
+                                     action:@selector(espLineChanged:) inCard:_espCard];
 
-    _espBoneLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-    _espBoneLabel.text = @"Bone / Skeleton";
-    _espBoneLabel.font = VNFont(17, UIFontWeightSemibold);
-    _espBoneLabel.textColor = VNText();
-    [_espCard addSubview:_espBoneLabel];
-    _espBoneSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
-    _espBoneSwitch.onTintColor = VNAccent();
-    _espBoneSwitch.on = ESPPrefsBool(@"Bone", YES);
-    [_espBoneSwitch addTarget:self action:@selector(espBoneChanged:) forControlEvents:UIControlEventValueChanged];
-    [_espCard addSubview:_espBoneSwitch];
+    _espBoneLabel = [self makeToggleLabel:@"Bone / Skeleton" inCard:_espCard];
+    _espBoneSwitch = [self makeToggleSwitch:ESPPrefsBool(@"Bone", YES)
+                                     action:@selector(espBoneChanged:) inCard:_espCard];
 
-    _espHealthLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-    _espHealthLabel.text = @"Health Bar";
-    _espHealthLabel.font = VNFont(17, UIFontWeightSemibold);
-    _espHealthLabel.textColor = VNText();
-    [_espCard addSubview:_espHealthLabel];
-    _espHealthSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
-    _espHealthSwitch.onTintColor = VNAccent();
-    _espHealthSwitch.on = ESPPrefsBool(@"Health", YES);
-    [_espHealthSwitch addTarget:self action:@selector(espHealthChanged:) forControlEvents:UIControlEventValueChanged];
-    [_espCard addSubview:_espHealthSwitch];
+    _espHealthLabel = [self makeToggleLabel:@"Health Bar" inCard:_espCard];
+    _espHealthSwitch = [self makeToggleSwitch:ESPPrefsBool(@"Health", YES)
+                                       action:@selector(espHealthChanged:) inCard:_espCard];
 
-    _espCountLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-    _espCountLabel.text = @"Player Count";
-    _espCountLabel.font = VNFont(17, UIFontWeightSemibold);
-    _espCountLabel.textColor = VNText();
-    [_espCard addSubview:_espCountLabel];
-    _espCountSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
-    _espCountSwitch.onTintColor = VNAccent();
-    _espCountSwitch.on = ESPPrefsBool(@"Count", YES);
-    [_espCountSwitch addTarget:self action:@selector(espCountChanged:) forControlEvents:UIControlEventValueChanged];
-    [_espCard addSubview:_espCountSwitch];
+    _espCountLabel = [self makeToggleLabel:@"Player Count" inCard:_espCard];
+    _espCountSwitch = [self makeToggleSwitch:ESPPrefsBool(@"Count", YES)
+                                      action:@selector(espCountChanged:) inCard:_espCard];
 
-    _espDistanceLimitLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-    _espDistanceLimitLabel.text = @"Max Distance (m)";
-    _espDistanceLimitLabel.font = VNFont(17, UIFontWeightSemibold);
-    _espDistanceLimitLabel.textColor = VNText();
-    [_espCard addSubview:_espDistanceLimitLabel];
+    _espDistanceLimitLabel = [self makeToggleLabel:@"Max Distance (m)" inCard:_espCard];
     _espDistanceLimitValueLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     _espDistanceLimitValueLabel.font = [UIFont monospacedSystemFontOfSize:15 weight:UIFontWeightSemibold];
     _espDistanceLimitValueLabel.textColor = VNMuted();
@@ -590,9 +930,10 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     [_espDistanceLimitSlider addTarget:self action:@selector(espDistanceLimitCommitted:) forControlEvents:UIControlEventTouchUpInside | UIControlEventTouchUpOutside];
     [_espCard addSubview:_espDistanceLimitSlider];
 
-    // Aimbot card
+    // ===== AIM CARD =====
     _aimCard = [self makeCard];
     [_contentView addSubview:_aimCard];
+
     _fovLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     _fovLabel.text = @"FOV size";
     _fovLabel.font = VNFont(17, UIFontWeightSemibold);
@@ -623,8 +964,7 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _triggerSegment = [[UISegmentedControl alloc] initWithItems:@[@"Auto", @"Fire", @"Scope", @"Both"]];
     {
         NSInteger idx = (NSInteger)ESPPrefsFloat(@"TriggerMode", 0.0f);
-        if (idx < 0) idx = 0;
-        if (idx > 3) idx = 3;
+        idx = MAX(0, MIN(3, idx));
         _triggerSegment.selectedSegmentIndex = idx;
     }
     if (@available(iOS 13.0, *)) {
@@ -634,9 +974,6 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     [_triggerSegment addTarget:self action:@selector(triggerSegmentChanged:) forControlEvents:UIControlEventValueChanged];
     [_aimCard addSubview:_triggerSegment];
 
-    // ============================================================
-    // [SỬA 1] Aim Position — rõ rằng áp dụng cho cả Aimbot + Silent.
-    // ============================================================
     _aimPosLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     _aimPosLabel.text = @"Aim Position (Aimbot + Silent)";
     _aimPosLabel.font = VNFont(17, UIFontWeightSemibold);
@@ -646,8 +983,7 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _aimPosSegment = [[UISegmentedControl alloc] initWithItems:@[@"Đầu", @"Cổ", @"Thân"]];
     {
         NSInteger idx = (NSInteger)ESPPrefsFloat(@"AimPos", 0.0f);
-        if (idx < 0) idx = 0;
-        if (idx > 2) idx = 2;
+        idx = MAX(0, MIN(2, idx));
         _aimPosSegment.selectedSegmentIndex = idx;
     }
     if (@available(iOS 13.0, *)) {
@@ -657,23 +993,7 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     [_aimPosSegment addTarget:self action:@selector(aimPosSegmentChanged:) forControlEvents:UIControlEventValueChanged];
     [_aimCard addSubview:_aimPosSegment];
 
-    // Log card
-    _logCard = [self makeCard];
-    [_contentView addSubview:_logCard];
-    _logTextView = [[UITextView alloc] initWithFrame:CGRectZero];
-    _logTextView.editable = NO;
-    _logTextView.scrollEnabled = YES;
-    _logTextView.showsHorizontalScrollIndicator = NO;
-    _logTextView.backgroundColor = [UIColor colorWithWhite:0.97 alpha:1.0];
-    _logTextView.layer.cornerRadius = 10.0f;
-    _logTextView.layer.borderWidth = 1.0f;
-    _logTextView.layer.borderColor = VNLine().CGColor;
-    _logTextView.font = [UIFont monospacedSystemFontOfSize:11 weight:UIFontWeightMedium];
-    _logTextView.textColor = [UIColor colorWithRed:0.12 green:0.55 blue:0.22 alpha:1.0];
-    _logTextView.text = @"[VN TOOL] ready.\nPress Bắt đầu to boot kernel.";
-    [_logCard addSubview:_logTextView];
-
-    // Version section
+    // ===== VERSION SECTION =====
     _versionSectionLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     _versionSectionLabel.text = @"Lựa chọn phiên bản:";
     _versionSectionLabel.font = VNFont(14, UIFontWeightBold);
@@ -698,7 +1018,7 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     [_ffCard addTarget:self action:@selector(versionCardTapped:) forControlEvents:UIControlEventTouchUpInside];
     [_contentView addSubview:_ffCard];
 
-    // Status card
+    // ===== STATUS CARD =====
     _statusCard = [self makeCard];
     [_contentView addSubview:_statusCard];
     _statusDot = [[UIView alloc] initWithFrame:CGRectZero];
@@ -719,7 +1039,7 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     [_openGameButton addTarget:self action:@selector(openGameTapped:) forControlEvents:UIControlEventTouchUpInside];
     [_statusCard addSubview:_openGameButton];
 
-    // License + auth
+    // ===== LICENSE + AUTH =====
     _licenseCard = [self makeCard];
     [_contentView addSubview:_licenseCard];
     _licenseTitleLabel = [[UILabel alloc] initWithFrame:CGRectZero];
@@ -748,7 +1068,7 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _authValueLabel.text = @"—";
     [_authCard addSubview:_authValueLabel];
 
-    // Support
+    // ===== SUPPORT =====
     _supportCard = [self makeCard];
     [_contentView addSubview:_supportCard];
     _supportTitleLabel = [[UILabel alloc] initWithFrame:CGRectZero];
@@ -770,7 +1090,7 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     [_joinButton addTarget:self action:@selector(joinSupportTapped:) forControlEvents:UIControlEventTouchUpInside];
     [_supportCard addSubview:_joinButton];
 
-    // Extra
+    // ===== EXTRA =====
     _extraCard = [self makeCard];
     [_contentView addSubview:_extraCard];
     _autoCleanLabel = [[UILabel alloc] initWithFrame:CGRectZero];
@@ -790,202 +1110,293 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     _authorizationButton = [UIButton buttonWithType:UIButtonTypeSystem];
     _authorizationButton.titleLabel.font = VNFont(14, UIFontWeightBold);
     [_authorizationButton setTitleColor:VNAccent() forState:UIControlStateNormal];
-    [_authorizationButton addTarget:self action:@selector(retryAuthorization:) forControlEvents:UIControlEventTouchUpInside];
+    [_authorizationButton addTarget:self action:@selector(revokeAuthorization)
+                   forControlEvents:UIControlEventTouchUpInside];
     [_extraCard addSubview:_authorizationButton];
 
     [self applyTheme];
 }
 
-- (void)viewDidLayoutSubviews {
-    [super viewDidLayoutSubviews];
-    UIEdgeInsets insets = self.view.safeAreaInsets;
-    CGFloat width = self.view.bounds.size.width;
-    CGFloat height = self.view.bounds.size.height;
-    _scrollView.frame = self.view.bounds;
+- (UILabel *)makeToggleLabel:(NSString *)text inCard:(UIView *)card {
+    UILabel *l = [[UILabel alloc] initWithFrame:CGRectZero];
+    l.text = text;
+    l.font = VNFont(17, UIFontWeightSemibold);
+    l.textColor = VNText();
+    [card addSubview:l];
+    return l;
+}
+- (UISwitch *)makeToggleSwitch:(BOOL)on action:(SEL)sel inCard:(UIView *)card {
+    UISwitch *s = [[UISwitch alloc] initWithFrame:CGRectZero];
+    s.onTintColor = VNAccent();
+    s.on = on;
+    [s addTarget:self action:sel forControlEvents:UIControlEventValueChanged];
+    [card addSubview:s];
+    return s;
+}
 
-    CGFloat gear = 44.0f;
-    _settingsBtn.frame = CGRectMake(width - insets.right - 16 - gear, insets.top + 8, gear, gear);
+#pragma mark - Gate overlay
 
-    CGFloat contentW = width;
-    CGFloat xPad = 16.0f;
-    CGFloat cardW = contentW - xPad * 2.0f;
-    CGFloat y = insets.top + 62.0f;
+- (void)buildGateOverlay {
+    _gateOverlay = [[UIView alloc] initWithFrame:self.view.bounds];
+    _gateOverlay.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    _gateOverlay.backgroundColor = VNBg();
+    UIActivityIndicatorViewStyle spinnerStyle;
+    if (@available(iOS 13.0, *)) spinnerStyle = UIActivityIndicatorViewStyleLarge;
+    else spinnerStyle = UIActivityIndicatorViewStyleWhiteLarge;
+    _gateSpinner = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:spinnerStyle];
+    _gateSpinner.color = VNAccent();
+    [_gateSpinner startAnimating];
+    [_gateOverlay addSubview:_gateSpinner];
+    _gateLabel = [[UILabel alloc] init];
+    _gateLabel.textColor = VNText();
+    _gateLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightMedium];
+    _gateLabel.textAlignment = NSTextAlignmentCenter;
+    _gateLabel.numberOfLines = 0;
+    [_gateOverlay addSubview:_gateLabel];
+    [self.view addSubview:_gateOverlay];
+}
 
-    // ===== CONTROL =====
-    CGFloat controlH = 100.0f;
-    _controlCard.frame = CGRectMake(xPad, y, cardW, controlH);
-    CGFloat iconSize = 64.0f;
-    _controlIconView.frame = CGRectMake(14, (controlH - iconSize) * 0.5f, iconSize, iconSize);
-
-    CGFloat btnW = 96;
-    _startButton.frame = CGRectMake(cardW - btnW - 16, 18, btnW, 36);
-    _killAllButton.frame = CGRectMake(cardW - btnW - 16, 60, btnW, 32);
-
-    CGFloat textX = 14 + iconSize + 12;
-    CGFloat textW = cardW - btnW - textX - 10;
-    _controlTitleLabel.frame = CGRectMake(textX, 22, textW, 24);
-    _controlSubtitleLabel.frame = CGRectMake(textX, 48, textW, 36);
-    y = CGRectGetMaxY(_controlCard.frame) + 16;
-
-    // ===== TOGGLES (4 rows + slider) =====
-    CGFloat toggleRowH = 62.0f;
-    CGFloat sliderAreaH = 82.0f;
-    CGFloat togglesH = toggleRowH * 4 + sliderAreaH;
-    _togglesCard.frame = CGRectMake(xPad, y, cardW, togglesH);
-
-    CGFloat rowY = 0;
-    _aimbotLabel.frame = CGRectMake(20, rowY, cardW - 110, toggleRowH);
-    _aimbotSwitch.frame = CGRectMake(cardW - 71, rowY + (toggleRowH - 31) * 0.5f, 51, 31);
-    rowY += toggleRowH;
-
-    _aimBehindWallLabel.frame = CGRectMake(20, rowY, cardW - 110, toggleRowH);
-    _aimBehindWallSwitch.frame = CGRectMake(cardW - 71, rowY + (toggleRowH - 31) * 0.5f, 51, 31);
-    rowY += toggleRowH;
-
-    _silentAimLabel.frame = CGRectMake(20, rowY, cardW - 110, toggleRowH);
-    _silentAimSwitch.frame = CGRectMake(cardW - 71, rowY + (toggleRowH - 31) * 0.5f, 51, 31);
-    rowY += toggleRowH;
-
-    _camLabel.frame = CGRectMake(20, rowY, cardW - 110, toggleRowH);
-    _camSwitch.frame = CGRectMake(cardW - 71, rowY + (toggleRowH - 31) * 0.5f, 51, 31);
-    rowY += toggleRowH;
-
-    _camSlider.frame = CGRectMake(20, rowY + 24, cardW - 100, 30);
-    _camValueLabel.frame = CGRectMake(cardW - 64, rowY + 26, 48, 26);
-    y = CGRectGetMaxY(_togglesCard.frame) + 16;
-
-    // ===== ESP ELEMENTS (6 rows: Bật ESP + 5 element + slider) =====
-    CGFloat espTitleH = 40.0f;
-    CGFloat espRowH = 60.0f;
-    CGFloat espSliderArea = 82.0f;
-    CGFloat espH = espTitleH + espRowH * 6 + espSliderArea;
-    _espCard.frame = CGRectMake(xPad, y, cardW, espH);
-    _espCardTitle.frame = CGRectMake(20, 14, cardW - 40, 20);
-
-    // Row 1: Bật ESP
-    _espLabel.frame = CGRectMake(20, espTitleH, cardW - 110, espRowH);
-    _espSwitch.frame = CGRectMake(cardW - 71, espTitleH + (espRowH - 31) * 0.5f, 51, 31);
-
-    // Row 2-6: Box, Snapline, Bone, Health, Count
-    NSArray<UILabel *> *espLabelsArr = @[_espBoxLabel, _espLineLabel, _espBoneLabel,
-                                          _espHealthLabel, _espCountLabel];
-    NSArray<UISwitch *> *espSwitchesArr = @[_espBoxSwitch, _espLineSwitch, _espBoneSwitch,
-                                             _espHealthSwitch, _espCountSwitch];
-    CGFloat espY = espTitleH + espRowH;
-    for (NSUInteger i = 0; i < 5; i++) {
-        UILabel *l = espLabelsArr[i];
-        UISwitch *s = espSwitchesArr[i];
-        l.frame = CGRectMake(20, espY, cardW - 110, espRowH);
-        s.frame = CGRectMake(cardW - 71, espY + (espRowH - 31) * 0.5f, 51, 31);
-        espY += espRowH;
+- (void)showGateMessage:(NSString *)t {
+    if (![NSThread isMainThread]) {
+        dispatch_async(dispatch_get_main_queue(), ^{ [self showGateMessage:t]; });
+        return;
     }
-    _espDistanceLimitLabel.frame = CGRectMake(20, espY, cardW - 110, 30);
-    _espDistanceLimitValueLabel.frame = CGRectMake(cardW - 64, espY, 48, 30);
-    _espDistanceLimitSlider.frame = CGRectMake(20, espY + 34, cardW - 40, 30);
-    y = CGRectGetMaxY(_espCard.frame) + 16;
+    _gateLabel.text = t ?: @"";
+    [self.view setNeedsLayout];
+}
 
-    // ===== AIM =====
-    CGFloat fovAreaH = 90.0f;
-    CGFloat segAreaH = 100.0f;
-    CGFloat aimH = fovAreaH + segAreaH * 2;
-    _aimCard.frame = CGRectMake(xPad, y, cardW, aimH);
+- (void)presentSafely:(UIViewController *)vc {
+    if (!vc) return;
+    if (![NSThread isMainThread]) {
+        dispatch_async(dispatch_get_main_queue(), ^{ [self presentSafely:vc]; });
+        return;
+    }
+    if (!self.isViewLoaded || !self.view.window) {
+        __weak __typeof(self) ws = self;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.20 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            [ws presentSafely:vc];
+        });
+        return;
+    }
+    UIViewController *top = self;
+    while (top.presentedViewController && !top.presentedViewController.isBeingDismissed)
+        top = top.presentedViewController;
+    if (top.presentedViewController && top.presentedViewController.isBeingDismissed) {
+        __weak __typeof(self) ws = self;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.20 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            [ws presentSafely:vc];
+        });
+        return;
+    }
+    if ([top isKindOfClass:[UIAlertController class]]) {
+        __weak __typeof(self) ws = self;
+        [top dismissViewControllerAnimated:NO completion:^{ [ws presentSafely:vc]; }];
+        return;
+    }
+    [top presentViewController:vc animated:YES completion:nil];
+}
 
-    _fovLabel.frame = CGRectMake(20, 18, 140, 24);
-    _fovValueLabel.frame = CGRectMake(cardW - 64, 18, 48, 24);
-    _fovSlider.frame = CGRectMake(20, 50, cardW - 40, 30);
+#pragma mark - Gate flow
 
-    _triggerLabel.frame = CGRectMake(20, fovAreaH + 14, 140, 24);
-    _triggerSegment.frame = CGRectMake(20, fovAreaH + 46, cardW - 40, 38);
+- (void)runGate {
+    [self showGateMessage:[self isVi] ? OXR("Đang kiểm tra…") : OXR("Checking…")];
+    __weak __typeof(self) ws = self;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        __strong __typeof(ws) ss = ws; if (!ss) return;
+        NSString *msg = nil;
+        NSInteger st = [LicenseGate maintenance:&msg];
+        if (st == 1) {
+            dispatch_async(dispatch_get_main_queue(), ^{ [ss showMaintenance:msg]; });
+            return;
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{ [ss afterMaintenance]; });
+    });
+}
+- (void)afterMaintenance {
+    if (![[NSUserDefaults standardUserDefaults] stringForKey:UD_LANG()]) {
+        [self pickLanguageThen:^{ [self tryAutoLogin]; }];
+    } else [self tryAutoLogin];
+}
+- (void)tryAutoLogin {
+    NSString *saved = [LicenseGate loadKey];
+    if (saved.length > 0) {
+        [self showGateMessage:[self isVi] ? OXR("Đang xác thực key…") : OXR("Verifying key…")];
+        __weak __typeof(self) ws = self;
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+            NSInteger r = [LicenseGate verify:saved];
+            dispatch_async(dispatch_get_main_queue(), ^{
+                __strong __typeof(ws) ss = ws; if (!ss) return;
+                if (r == 0) [ss unlock:saved];
+                else { [LicenseGate forgetKey]; [ss promptKey]; }
+            });
+        });
+    } else [self promptKey];
+}
+- (void)promptKey {
+    BOOL vi = [self isVi];
+    UIAlertController *ac = [UIAlertController
+        alertControllerWithTitle:OXR("VN TOOL")
+        message:vi ? OXR("Nhập license key để kích hoạt") : OXR("Enter license key to activate")
+        preferredStyle:UIAlertControllerStyleAlert];
+    [ac addTextFieldWithConfigurationHandler:^(UITextField *tf){
+        tf.placeholder = OXR("XXXX-XXXX-XXXX");
+        tf.autocapitalizationType = UITextAutocapitalizationTypeAllCharacters;
+    }];
+    [ac addAction:[UIAlertAction actionWithTitle:(vi?OXR("Kích hoạt"):OXR("Activate"))
+        style:UIAlertActionStyleDefault handler:^(UIAlertAction *a){
+            NSString *k = [ac.textFields.firstObject.text
+                stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+            if (k.length == 0) { [self promptKey]; return; }
+            [self showGateMessage:vi ? OXR("Đang xác thực…") : OXR("Verifying…")];
+            __weak __typeof(self) ws = self;
+            dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+                NSInteger r = [LicenseGate verify:k];
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    __strong __typeof(ws) ss = ws; if (!ss) return;
+                    if (r == 0) { [LicenseGate saveKey:k]; [ss unlock:k]; }
+                    else        { [ss showKeyError:r]; }
+                });
+            });
+        }]];
+    [ac addAction:[UIAlertAction actionWithTitle:(vi?OXR("Thoát"):OXR("Exit"))
+        style:UIAlertActionStyleCancel handler:^(UIAlertAction *a){ exit(0); }]];
+    [self presentSafely:ac];
+}
+- (void)showKeyError:(NSInteger)r {
+    BOOL vi = [self isVi];
+    NSString *m;
+    switch (r) {
+        case 1: m = vi ? OXR("Key không tồn tại.") : OXR("Key does not exist."); break;
+        case 2: m = vi ? OXR("Key đã bị thu hồi hoặc hết hạn.") : OXR("Key revoked or expired."); break;
+        case 3: m = vi ? OXR("Key đã vượt số máy cho phép.") : OXR("Device limit exceeded."); break;
+        case 4: m = vi ? OXR("Không kết nối được server.") : OXR("Server connection failed."); break;
+        default: m = vi ? OXR("Key không hợp lệ.") : OXR("Invalid key.");
+    }
+    UIAlertController *ac = [UIAlertController
+        alertControllerWithTitle:(vi?OXR("Sai key"):OXR("Wrong key")) message:m
+        preferredStyle:UIAlertControllerStyleAlert];
+    [ac addAction:[UIAlertAction actionWithTitle:(vi?OXR("Thử lại"):OXR("Retry"))
+        style:UIAlertActionStyleDefault handler:^(UIAlertAction *a){ [self promptKey]; }]];
+    [ac addAction:[UIAlertAction actionWithTitle:(vi?OXR("Thoát"):OXR("Exit"))
+        style:UIAlertActionStyleCancel handler:^(UIAlertAction *a){ exit(0); }]];
+    [self presentSafely:ac];
+}
+- (void)pickLanguageThen:(void(^)(void))next {
+    UIAlertController *ac = [UIAlertController
+        alertControllerWithTitle:OXR("🌐 Ngôn ngữ / Language")
+        message:OXR("Chọn ngôn ngữ / Choose language")
+        preferredStyle:UIAlertControllerStyleAlert];
+    [ac addAction:[UIAlertAction actionWithTitle:OXR("🇻🇳  Tiếng Việt")
+        style:UIAlertActionStyleDefault handler:^(UIAlertAction *a){
+            [[NSUserDefaults standardUserDefaults] setObject:OXR("vi") forKey:UD_LANG()]; if (next) next();
+        }]];
+    [ac addAction:[UIAlertAction actionWithTitle:OXR("🇺🇸  English")
+        style:UIAlertActionStyleDefault handler:^(UIAlertAction *a){
+            [[NSUserDefaults standardUserDefaults] setObject:OXR("en") forKey:UD_LANG()]; if (next) next();
+        }]];
+    [self presentSafely:ac];
+}
+- (void)showMaintenance:(NSString *)msg {
+    BOOL vi = [self isVi];
+    UIAlertController *ac = [UIAlertController
+        alertControllerWithTitle:(vi?OXR("🛠 Bảo trì"):OXR("🛠 Maintenance"))
+        message:(msg.length ? msg : (vi ? OXR("Server đang bảo trì.") : OXR("Server is under maintenance.")))
+        preferredStyle:UIAlertControllerStyleAlert];
+    [ac addAction:[UIAlertAction actionWithTitle:OXR("OK")
+        style:UIAlertActionStyleDefault handler:^(UIAlertAction *a){ exit(0); }]];
+    [self presentSafely:ac];
+}
+- (void)showExpiryFor:(NSString *)key {
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        NSDictionary *f = [LicenseGate fetch:key];
+        NSString *iso = f[OXR("expires_at")][OXR("timestampValue")] ?: f[OXR("expires_at")][OXR("stringValue")];
+        if (!iso.length) return;
+        NSDate *exp = [LicenseGate parseISO:iso];
+        if (!exp) return;
+        NSTimeInterval s = [exp timeIntervalSinceNow];
+        if (s <= 0) return;
+        long days = (long)(s/86400);
+        long h = (long)((s - days*86400)/3600);
+        long m = (long)((s - days*86400 - h*3600)/60);
+        BOOL vi = [self isVi];
+        NSString *timeStr = days > 0
+            ? (vi ? [NSString stringWithFormat:OXR("%ld ngày %02ld giờ %02ld phút"), days,h,m]
+                  : [NSString stringWithFormat:OXR("%ld days %02ldh %02ldm"), days,h,m])
+            : (vi ? [NSString stringWithFormat:OXR("%02ld giờ %02ld phút"), h,m]
+                  : [NSString stringWithFormat:OXR("%02ldh %02ldm"), h,m]);
+        NSDateFormatter *df = [NSDateFormatter new];
+        df.dateFormat = OXR("dd/MM/yyyy HH:mm");
+        NSString *expStr = [df stringFromDate:exp];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self.licenseValueLabel.text = [NSString stringWithFormat:@"%@\n%@", timeStr, expStr];
+            UIAlertController *ac = [UIAlertController
+                alertControllerWithTitle:(vi?OXR("🔑 Key của bạn"):OXR("🔑 Your License"))
+                message:(vi ? [NSString stringWithFormat:OXR("Còn lại: %@\nHết hạn: %@"), timeStr, expStr]
+                            : [NSString stringWithFormat:OXR("Remaining: %@\nExpires: %@"), timeStr, expStr])
+                preferredStyle:UIAlertControllerStyleAlert];
+            [ac addAction:[UIAlertAction actionWithTitle:OXR("OK") style:UIAlertActionStyleDefault handler:nil]];
+            [self presentSafely:ac];
+        });
+    });
+}
 
-    // [SỬA 1] AimPos label rộng hơn cho text mới
-    _aimPosLabel.frame = CGRectMake(20, fovAreaH + segAreaH + 14, 220, 24);
-    _aimPosSegment.frame = CGRectMake(20, fovAreaH + segAreaH + 46, cardW - 40, 38);
-    y = CGRectGetMaxY(_aimCard.frame) + 16;
+- (void)unlock:(NSString *)verifiedKey {
+    _unlocked = YES;
+    self.vaultedKey = VaultPut(verifiedKey);
 
-    // ===== LOG =====
-    CGFloat logH = 200.0f;
-    _logCard.frame = CGRectMake(xPad, y, cardW, logH);
-    _logTextView.frame = CGRectMake(10, 8, cardW - 20, logH - 16);
-    y = CGRectGetMaxY(_logCard.frame) + 22;
+    self.scrollView.hidden = NO;
+    self.settingsBtn.hidden = NO;
+    self.authorizationLabel.text = @"No key required";
+    [self.authorizationButton setTitle:@"Unlocked" forState:UIControlStateNormal];
+    self.authorizationButton.enabled = NO;
+    self.authValueLabel.text = @"Hoạt động";
+    self.authValueLabel.textColor = VNAccent();
 
-    _versionSectionLabel.frame = CGRectMake(xPad + 4, y, cardW - 8, 22);
-    y = CGRectGetMaxY(_versionSectionLabel.frame) + 10;
+    [UIView animateWithDuration:0.25 animations:^{ self->_gateOverlay.alpha = 0; }
+        completion:^(BOOL fin){
+            [self->_gateOverlay removeFromSuperview];
+            self->_gateOverlay = nil;
+        }];
 
-    CGFloat gap = 12.0f;
-    CGFloat versionW = (cardW - gap) * 0.5f;
-    CGFloat versionH = 136.0f;
-    _ffMaxCard.frame = CGRectMake(xPad, y, versionW, versionH);
-    _ffCard.frame = CGRectMake(xPad + versionW + gap, y, versionW, versionH);
-    CGFloat iconSide = 68.0f;
-    _ffMaxIconView.frame = CGRectMake((versionW - iconSide) * 0.5f, 20, iconSide, iconSide);
-    _ffIconView.frame = CGRectMake((versionW - iconSide) * 0.5f, 20, iconSide, iconSide);
-    _ffMaxNameLabel.frame = CGRectMake(8, 96, versionW - 16, 24);
-    _ffNameLabel.frame = CGRectMake(8, 96, versionW - 16, 24);
-    y = CGRectGetMaxY(_ffMaxCard.frame) + 16;
+    [self updateVersionSelectionUI];
+    [self refreshHUDState];
+    [self startPollingGameState];
+    [self startMaintenancePolling];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(1.0*NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{ [self showExpiryFor:verifiedKey]; });
+}
 
-    // ===== STATUS =====
-    CGFloat statusH = 72.0f;
-    _statusCard.frame = CGRectMake(xPad, y, cardW, statusH);
-    _statusDot.frame = CGRectMake(20, (statusH - 12) * 0.5f, 12, 12);
-    _openGameButton.frame = CGRectMake(cardW - 116, (statusH - 38) * 0.5f, 100, 38);
-    _statusLabel.frame = CGRectMake(42, 0, cardW - 116 - 50, statusH);
-    y = CGRectGetMaxY(_statusCard.frame) + 16;
-
-    // ===== INFO =====
-    CGFloat infoH = 60.0f;
-    _licenseCard.frame = CGRectMake(xPad, y, cardW, infoH);
-    _licenseTitleLabel.frame = CGRectMake(20, 0, cardW/2, infoH);
-    _licenseValueLabel.frame = CGRectMake(cardW/2, 0, cardW/2 - 20, infoH);
-    y = CGRectGetMaxY(_licenseCard.frame) + 1;
-
-    _authCard.frame = CGRectMake(xPad, y, cardW, infoH);
-    _authTitleLabel.frame = CGRectMake(20, 0, cardW/2, infoH);
-    _authValueLabel.frame = CGRectMake(cardW/2, 0, cardW/2 - 20, infoH);
-    y = CGRectGetMaxY(_authCard.frame) + 16;
-
-    // ===== SUPPORT =====
-    CGFloat supportH = 80.0f;
-    _supportCard.frame = CGRectMake(xPad, y, cardW, supportH);
-    _joinButton.frame = CGRectMake(cardW - 96, (supportH - 38) * 0.5f, 80, 38);
-    _supportTitleLabel.frame = CGRectMake(20, 20, cardW - 130, 26);
-    _supportSubtitleLabel.frame = CGRectMake(20, 48, cardW - 130, 20);
-    y = CGRectGetMaxY(_supportCard.frame) + 16;
-
-    // ===== EXTRA =====
-    CGFloat extraH = 104.0f;
-    _extraCard.frame = CGRectMake(xPad, y, cardW, extraH);
-    _autoCleanLabel.frame = CGRectMake(20, 18, cardW - 100, 26);
-    CGSize sw = _autoCleanSwitch.intrinsicContentSize;
-    _autoCleanSwitch.frame = CGRectMake(cardW - sw.width - 20, 18, sw.width, sw.height);
-    _authorizationLabel.frame = CGRectMake(20, 58, cardW - 170, 30);
-    _authorizationButton.frame = CGRectMake(cardW - 140, 58, 120, 30);
-    y = CGRectGetMaxY(_extraCard.frame) + 24 + insets.bottom;
-
-    _contentView.frame = CGRectMake(0, 0, contentW, MAX(y, height));
-    _scrollView.contentSize = _contentView.bounds.size;
+- (void)startMaintenancePolling {
+    __weak __typeof(self) ws = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(60*NSEC_PER_SEC)),
+        dispatch_get_global_queue(QOS_CLASS_BACKGROUND, 0), ^{
+        __typeof(self) ss = ws; if (!ss) return;
+        NSString *msg = nil;
+        if ([LicenseGate maintenance:&msg] == 1) {
+            dispatch_async(dispatch_get_main_queue(), ^{ [ss showMaintenance:msg]; });
+            return;
+        }
+        [ss startMaintenancePolling];
+    });
 }
 
 #pragma mark - Version selection
 
 - (void)versionCardTapped:(UIButton *)sender {
     BOOL pickMax = (sender.tag == 2);
-    NSString *gameId = pickMax ? @"ffmax" : @"ff";
-    GameTargetSetSelectedId(gameId);
+    GameTargetSetSelectedId(pickMax ? @"ffmax" : @"ff");
     [self updateVersionSelectionUI];
     [self refreshHUDState];
 }
-
 - (void)updateVersionSelectionUI {
     BOOL isMax = GameTargetIsMax();
-    UIColor *selected = VNAccent();
-
+    UIColor *sel = VNAccent();
     _ffMaxCard.layer.borderWidth = 2.5f;
     _ffCard.layer.borderWidth = 2.5f;
-    _ffMaxCard.layer.borderColor = (isMax ? selected : [UIColor clearColor]).CGColor;
-    _ffCard.layer.borderColor = (!isMax ? selected : [UIColor clearColor]).CGColor;
+    _ffMaxCard.layer.borderColor = (isMax ? sel : [UIColor clearColor]).CGColor;
+    _ffCard.layer.borderColor = (!isMax ? sel : [UIColor clearColor]).CGColor;
     _ffMaxCard.backgroundColor = isMax ? VNPanel2() : VNCard();
     _ffCard.backgroundColor = !isMax ? VNPanel2() : VNCard();
-
     UIImage *icon = [self imageNamedWebPOrPNG:isMax ? @"ffmax" : @"ff"];
     if (icon) _controlIconView.image = icon;
 }
@@ -993,109 +1404,80 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
 #pragma mark - App lifecycle
 
 - (void)appBecameActive {
+    if (!_unlocked) return;
     GameOffsetsReload();
     [self applyTheme];
     [self updateVersionSelectionUI];
     [self refreshHUDState];
 }
 
-#pragma mark - HUD / game
-
-- (BOOL)isGameRunning {
-    return GameTargetIsRunning();
+- (void)appResignedActive {
+    if (self.vaultedKey) {
+        NSString *plain = VaultGet(self.vaultedKey);
+        if (plain) {
+            SessionKeyReroll();
+            self.vaultedKey = VaultPut(plain);
+        }
+    }
 }
 
+#pragma mark - HUD / game
+
+- (BOOL)isGameRunning { return GameTargetIsRunning(); }
+
 - (void)startPollingGameState {
-    __weak __typeof(self) weakSelf = self;
-    _pollTimer = [NSTimer scheduledTimerWithTimeInterval:1.0
-                                                   repeats:YES
-                                                     block:^(NSTimer *timer) {
-        [weakSelf refreshHUDState];
+    __weak __typeof(self) ws = self;
+    _pollTimer = [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *timer) {
+        __typeof(self) ss = ws; if (!ss || !ss.unlocked) return;
+        [ss refreshHUDState];
     }];
 }
 
 - (void)autoCleanSwitchChanged:(UISwitch *)sender {
     ESPPrefsSetBool(@"AutoVarCleanBeforeHUD", sender.on);
 }
-
 - (void)aimbotSwitchChanged:(UISwitch *)sender {
     ESPPrefsSetBoolLive(@"Aimbot", sender.on);
     ESPSyncFromPrefs();
 }
-
-// ============================================================
-// [SỬA 2] Log Silent có FOV + AimPos — dễ debug khi bật.
-// Logic gốc giữ nguyên: chỉ thêm log.
-// ============================================================
 - (void)silentAimSwitchChanged:(UISwitch *)sender {
     ESPPrefsSetBoolLive(@"AimSilent", sender.on);
     ESPSyncFromPrefs();
-    NSLog(@"[VN] AimSilent=%d (FOV=%.0f, AimPos=%d)",
-          (int)sender.on,
-          ESPPrefsFloat(@"Fov", 150.0f),
-          (int)ESPPrefsFloat(@"AimPos", 0.0f));
-    [self appendBootLog:[NSString stringWithFormat:
+    [[VNLog shared] append:[NSString stringWithFormat:
         @"[VN] Silent Aim %@ (FOV %.0f, Pos %d)",
         sender.on ? @"ON" : @"OFF",
         ESPPrefsFloat(@"Fov", 150.0f),
         (int)ESPPrefsFloat(@"AimPos", 0.0f)]];
 }
-
 - (void)espSwitchChanged:(UISwitch *)sender {
     ESPPrefsSetBoolLive(@"EnableESP", sender.on);
     ESPSyncFromPrefs();
 }
-
 - (void)camSwitchChanged:(UISwitch *)sender {
     ESPPrefsSetBoolLive(@"CamPC", sender.on);
     ESPSyncFromPrefs();
 }
-
 - (void)camSliderChanged:(UISlider *)sender {
-    float v = sender.value;
-    _camValueLabel.text = [NSString stringWithFormat:@"%.0f", v];
-    ESPPrefsSetFloatLive(@"CamPCValue", v);
+    _camValueLabel.text = [NSString stringWithFormat:@"%.0f", sender.value];
+    ESPPrefsSetFloatLive(@"CamPCValue", sender.value);
 }
-
 - (void)fovSliderChanged:(UISlider *)sender {
-    float v = sender.value;
-    _fovValueLabel.text = [NSString stringWithFormat:@"%.0f", v];
-    ESPPrefsSetFloatLive(@"Fov", v);
+    _fovValueLabel.text = [NSString stringWithFormat:@"%.0f", sender.value];
+    ESPPrefsSetFloatLive(@"Fov", sender.value);
 }
-
-#pragma mark - ESP element toggles
-- (void)espBoxChanged:(UISwitch *)sender {
-    ESPPrefsSetBoolLive(@"Box", sender.on);
-    ESPSyncFromPrefs();
-}
-- (void)espLineChanged:(UISwitch *)sender {
-    ESPPrefsSetBoolLive(@"Line", sender.on);
-    ESPSyncFromPrefs();
-}
-- (void)espBoneChanged:(UISwitch *)sender {
-    ESPPrefsSetBoolLive(@"Bone", sender.on);
-    ESPSyncFromPrefs();
-}
-- (void)espHealthChanged:(UISwitch *)sender {
-    ESPPrefsSetBoolLive(@"Health", sender.on);
-    ESPSyncFromPrefs();
-}
-- (void)espCountChanged:(UISwitch *)sender {
-    ESPPrefsSetBoolLive(@"Count", sender.on);
-    ESPSyncFromPrefs();
-}
-
+- (void)espBoxChanged:(UISwitch *)sender { ESPPrefsSetBoolLive(@"Box", sender.on); ESPSyncFromPrefs(); }
+- (void)espLineChanged:(UISwitch *)sender { ESPPrefsSetBoolLive(@"Line", sender.on); ESPSyncFromPrefs(); }
+- (void)espBoneChanged:(UISwitch *)sender { ESPPrefsSetBoolLive(@"Bone", sender.on); ESPSyncFromPrefs(); }
+- (void)espHealthChanged:(UISwitch *)sender { ESPPrefsSetBoolLive(@"Health", sender.on); ESPSyncFromPrefs(); }
+- (void)espCountChanged:(UISwitch *)sender { ESPPrefsSetBoolLive(@"Count", sender.on); ESPSyncFromPrefs(); }
 - (void)espDistanceLimitChanged:(UISlider *)sender {
-    float v = sender.value;
-    _espDistanceLimitValueLabel.text = [NSString stringWithFormat:@"%.0f", v];
-    ESPPrefsSetFloatLive(@"EspDistanceLimit", v);
+    _espDistanceLimitValueLabel.text = [NSString stringWithFormat:@"%.0f", sender.value];
+    ESPPrefsSetFloatLive(@"EspDistanceLimit", sender.value);
 }
-
 - (void)espDistanceLimitCommitted:(UISlider *)sender {
     ESPPrefsSetFloat(@"EspDistanceLimit", sender.value);
     ESPSyncFromPrefs();
 }
-
 - (void)triggerSegmentChanged:(UISegmentedControl *)sender {
     float v = (float)sender.selectedSegmentIndex;
     NSUserDefaults *std = [NSUserDefaults standardUserDefaults];
@@ -1104,9 +1486,7 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     [std synchronize];
     ESPPrefsSetFloat(@"TriggerMode", v);
     ESPSyncFromPrefs();
-    NSLog(@"[VN] TriggerMode set to %.0f", v);
 }
-
 - (void)aimPosSegmentChanged:(UISegmentedControl *)sender {
     float v = (float)sender.selectedSegmentIndex;
     NSUserDefaults *std = [NSUserDefaults standardUserDefaults];
@@ -1115,9 +1495,7 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     [std synchronize];
     ESPPrefsSetFloat(@"AimPos", v);
     ESPSyncFromPrefs();
-    NSLog(@"[VN] AimPos set to %.0f", v);
 }
-
 - (void)aimBehindWallSwitchChanged:(UISwitch *)sender {
     ESPPrefsSetBoolLive(@"AimBehindWall", sender.on);
     ESPSyncFromPrefs();
@@ -1126,7 +1504,7 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
 #pragma mark - Start / Kill All
 
 - (void)startButtonTapped:(UIButton *)sender {
-    (void)sender;
+    if (!_unlocked) return;
     BOOL hudOn = IsHUDEnabled();
     if (hudOn) {
         ++_hudRequestSerial;
@@ -1135,29 +1513,26 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
         [self refreshHUDState];
         return;
     }
-
-    NSInteger requestSerial = ++_hudRequestSerial;
+    NSInteger serial = ++_hudRequestSerial;
     _startButton.enabled = NO;
-    [self startHUDForRequest:requestSerial];
+    [self startHUDForRequest:serial];
 }
 
-- (void)startHUDForRequest:(NSInteger)requestSerial {
+- (void)startHUDForRequest:(NSInteger)serial {
     _pendingHUDEnableUntil = CACurrentMediaTime() + 2.5;
     GameOffsetsReload();
     BOOL autoClean = ESPPrefsBool(@"AutoVarCleanBeforeHUD", NO);
     if (!autoClean) {
-        g_activeLogVC = self;
         kernelBootLog = HomeVCBootLogSink;
         kernelBootStart();
         self.startButton.enabled = YES;
         [self refreshHUDState];
         return;
     }
-
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
         [[varCleanController sharedInstance] runVarCleanNowWithCompletion:^(BOOL authorized) {
             dispatch_async(dispatch_get_main_queue(), ^{
-                if (requestSerial != self.hudRequestSerial || !authorized) {
+                if (serial != self.hudRequestSerial || !authorized) {
                     self.pendingHUDEnableUntil = 0;
                     [self refreshHUDState];
                     return;
@@ -1171,11 +1546,8 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
 }
 
 - (void)killAllTapped:(id)sender {
-    (void)sender;
-
     ++_hudRequestSerial;
     _pendingHUDEnableUntil = 0;
-
     SetHUDEnabled(NO);
 
     ESPPrefsSetBoolLive(@"Aimbot", NO);
@@ -1188,7 +1560,6 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
     ESPPrefsSetBoolLive(@"Health", NO);
     ESPPrefsSetBoolLive(@"Count", NO);
     ESPPrefsSetBoolLive(@"AimBehindWall", NO);
-
     ESPSyncFromPrefs();
 
     dispatch_async(dispatch_get_main_queue(), ^{
@@ -1202,8 +1573,7 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
         [self.espHealthSwitch setOn:NO animated:YES];
         [self.espCountSwitch setOn:NO animated:YES];
         [self.aimBehindWallSwitch setOn:NO animated:YES];
-
-        [self appendBootLog:@"[VN] Tắt toàn bộ HUD + ESP + Aimbot"];
+        [[VNLog shared] append:@"[VN] Tắt toàn bộ HUD + ESP + Aimbot"];
         [self refreshHUDState];
     });
 }
@@ -1211,23 +1581,16 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
 #pragma mark - Open game / support
 
 - (void)openGameTapped:(id)sender {
-    (void)sender;
     NSString *bundleId = GameTargetIsMax() ? @"com.dts.freefiremax" : @"vn.vng.freefireth";
     NSURL *url = [NSURL URLWithString:[NSString stringWithFormat:@"%@://", bundleId]];
     UIApplication *app = [UIApplication sharedApplication];
-    if ([app canOpenURL:url]) {
-        [app openURL:url options:@{} completionHandler:nil];
-        return;
-    }
+    if ([app canOpenURL:url]) { [app openURL:url options:@{} completionHandler:nil]; return; }
     NSArray<NSString *> *fallbacks = GameTargetIsMax()
         ? @[ @"freefiremax://", @"ffmax://" ]
         : @[ @"freefireth://", @"freefire://" ];
     for (NSString *scheme in fallbacks) {
         NSURL *u = [NSURL URLWithString:scheme];
-        if ([app canOpenURL:u]) {
-            [app openURL:u options:@{} completionHandler:nil];
-            return;
-        }
+        if ([app canOpenURL:u]) { [app openURL:u options:@{} completionHandler:nil]; return; }
     }
     UIAlertController *alert =
         [UIAlertController alertControllerWithTitle:@"Không mở được game"
@@ -1238,38 +1601,22 @@ static UIFont *VNFont(CGFloat size, UIFontWeight weight) {
 }
 
 - (void)joinSupportTapped:(id)sender {
-    (void)sender;
     NSURL *url = [NSURL URLWithString:@"https://t.me/vntool"];
     if (!url) return;
-    if (@available(iOS 9.0, *)) {
-        SFSafariViewController *svc = [[SFSafariViewController alloc] initWithURL:url];
-        [self presentViewController:svc animated:YES completion:nil];
-    } else {
-        [[UIApplication sharedApplication] openURL:url options:@{} completionHandler:nil];
-    }
+    SFSafariViewController *svc = [[SFSafariViewController alloc] initWithURL:url];
+    [self presentViewController:svc animated:YES completion:nil];
 }
 
-static void HomeVCBootLogSink(NSString *line) {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        HomeViewController *vc = g_activeLogVC;
-        if (!vc) return;
-        [vc appendBootLog:line];
-    });
+- (void)revokeAuthorization {
+    SetHUDEnabled(NO);
+    [LicenseGate forgetKey];
+    [[VNLog shared] append:@"[VN] Đã xoá license key"];
 }
 
-- (void)appendBootLog:(NSString *)line {
-    static NSMutableString *bootText;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{ bootText = [NSMutableString new]; });
-    [bootText appendFormat:@"%@\n", line];
-    if (bootText.length > 8000) [bootText deleteCharactersInRange:NSMakeRange(0, bootText.length - 8000)];
-    NSString *snap = [bootText copy];
-    self.logTextView.text = snap;
-    [self.logTextView scrollRangeToVisible:NSMakeRange(snap.length, 0)];
-}
+#pragma mark - HUD state
 
 - (void)refreshHUDState {
-    if (!self.isViewLoaded) return;
+    if (!_unlocked || !self.isViewLoaded) return;
     GameOffsetsReload();
 
     BOOL gameIsRunning = [self isGameRunning];
@@ -1301,13 +1648,12 @@ static void HomeVCBootLogSink(NSString *line) {
     _controlSubtitleLabel.alpha = 1.0;
 
     CFTimeInterval now = CACurrentMediaTime();
-    BOOL isWithinEnableGracePeriod = _pendingHUDEnableUntil > 0 && now < _pendingHUDEnableUntil;
-    if (!hudIsEnabled && isWithinEnableGracePeriod) {
+    BOOL inGrace = (_pendingHUDEnableUntil > 0 && now < _pendingHUDEnableUntil);
+    if (!hudIsEnabled && inGrace) {
         [_startButton setTitle:@"Đang bật…" forState:UIControlStateNormal];
         _startButton.backgroundColor = VNAccentDim();
         return;
     }
-
     if (hudIsEnabled) {
         _pendingHUDEnableUntil = 0;
         [_startButton setTitle:@"Tắt HUD" forState:UIControlStateNormal];
@@ -1316,6 +1662,157 @@ static void HomeVCBootLogSink(NSString *line) {
         [_startButton setTitle:@"Bắt đầu" forState:UIControlStateNormal];
         _startButton.backgroundColor = VNAccent();
     }
+}
+
+#pragma mark - Layout
+
+- (void)viewDidLayoutSubviews {
+    [super viewDidLayoutSubviews];
+    UIEdgeInsets insets = self.view.safeAreaInsets;
+    CGFloat width = self.view.bounds.size.width;
+    CGFloat height = self.view.bounds.size.height;
+    _scrollView.frame = self.view.bounds;
+
+    CGFloat gear = 44.0f;
+    _settingsBtn.frame = CGRectMake(width - insets.right - 16 - gear, insets.top + 8, gear, gear);
+
+    CGFloat contentW = width, xPad = 16.0f;
+    CGFloat cardW = contentW - xPad * 2.0f;
+    CGFloat y = insets.top + 62.0f;
+
+    // Control
+    CGFloat controlH = 100.0f;
+    _controlCard.frame = CGRectMake(xPad, y, cardW, controlH);
+    CGFloat iconSize = 64.0f;
+    _controlIconView.frame = CGRectMake(14, (controlH - iconSize) * 0.5f, iconSize, iconSize);
+    CGFloat btnW = 96;
+    _startButton.frame = CGRectMake(cardW - btnW - 16, 18, btnW, 36);
+    _killAllButton.frame = CGRectMake(cardW - btnW - 16, 60, btnW, 32);
+    CGFloat textX = 14 + iconSize + 12;
+    CGFloat textW = cardW - btnW - textX - 10;
+    _controlTitleLabel.frame = CGRectMake(textX, 22, textW, 24);
+    _controlSubtitleLabel.frame = CGRectMake(textX, 48, textW, 36);
+    y = CGRectGetMaxY(_controlCard.frame) + 16;
+
+    // Toggles
+    CGFloat toggleRowH = 62.0f;
+    CGFloat sliderAreaH = 82.0f;
+    CGFloat togglesH = toggleRowH * 4 + sliderAreaH;
+    _togglesCard.frame = CGRectMake(xPad, y, cardW, togglesH);
+
+    CGFloat rowY = 0;
+    void (^placeRow)(UILabel *, UISwitch *) = ^(UILabel *l, UISwitch *s) {
+        l.frame = CGRectMake(20, rowY, cardW - 110, toggleRowH);
+        s.frame = CGRectMake(cardW - 71, rowY + (toggleRowH - 31) * 0.5f, 51, 31);
+        rowY += toggleRowH;
+    };
+    placeRow(_aimbotLabel, _aimbotSwitch);
+    placeRow(_aimBehindWallLabel, _aimBehindWallSwitch);
+    placeRow(_silentAimLabel, _silentAimSwitch);
+    placeRow(_camLabel, _camSwitch);
+
+    _camSlider.frame = CGRectMake(20, rowY + 24, cardW - 100, 30);
+    _camValueLabel.frame = CGRectMake(cardW - 64, rowY + 26, 48, 26);
+    y = CGRectGetMaxY(_togglesCard.frame) + 16;
+
+    // ESP
+    CGFloat espTitleH = 40.0f;
+    CGFloat espRowH = 60.0f;
+    CGFloat espSliderArea = 82.0f;
+    CGFloat espH = espTitleH + espRowH * 6 + espSliderArea;
+    _espCard.frame = CGRectMake(xPad, y, cardW, espH);
+    _espCardTitle.frame = CGRectMake(20, 14, cardW - 40, 20);
+
+    _espLabel.frame = CGRectMake(20, espTitleH, cardW - 110, espRowH);
+    _espSwitch.frame = CGRectMake(cardW - 71, espTitleH + (espRowH - 31) * 0.5f, 51, 31);
+
+    NSArray<UILabel *> *espLabels = @[_espBoxLabel, _espLineLabel, _espBoneLabel, _espHealthLabel, _espCountLabel];
+    NSArray<UISwitch *> *espSwitches = @[_espBoxSwitch, _espLineSwitch, _espBoneSwitch, _espHealthSwitch, _espCountSwitch];
+    CGFloat espY = espTitleH + espRowH;
+    for (NSUInteger i = 0; i < 5; i++) {
+        espLabels[i].frame = CGRectMake(20, espY, cardW - 110, espRowH);
+        espSwitches[i].frame = CGRectMake(cardW - 71, espY + (espRowH - 31) * 0.5f, 51, 31);
+        espY += espRowH;
+    }
+    _espDistanceLimitLabel.frame = CGRectMake(20, espY, cardW - 110, 30);
+    _espDistanceLimitValueLabel.frame = CGRectMake(cardW - 64, espY, 48, 30);
+    _espDistanceLimitSlider.frame = CGRectMake(20, espY + 34, cardW - 40, 30);
+    y = CGRectGetMaxY(_espCard.frame) + 16;
+
+    // Aim
+    CGFloat fovAreaH = 90.0f, segAreaH = 100.0f;
+    CGFloat aimH = fovAreaH + segAreaH * 2;
+    _aimCard.frame = CGRectMake(xPad, y, cardW, aimH);
+    _fovLabel.frame = CGRectMake(20, 18, 140, 24);
+    _fovValueLabel.frame = CGRectMake(cardW - 64, 18, 48, 24);
+    _fovSlider.frame = CGRectMake(20, 50, cardW - 40, 30);
+    _triggerLabel.frame = CGRectMake(20, fovAreaH + 14, 140, 24);
+    _triggerSegment.frame = CGRectMake(20, fovAreaH + 46, cardW - 40, 38);
+    _aimPosLabel.frame = CGRectMake(20, fovAreaH + segAreaH + 14, 220, 24);
+    _aimPosSegment.frame = CGRectMake(20, fovAreaH + segAreaH + 46, cardW - 40, 38);
+    y = CGRectGetMaxY(_aimCard.frame) + 16;
+
+    // Version
+    y += 6;
+    _versionSectionLabel.frame = CGRectMake(xPad + 4, y, cardW - 8, 22);
+    y = CGRectGetMaxY(_versionSectionLabel.frame) + 10;
+    CGFloat gap = 12.0f;
+    CGFloat versionW = (cardW - gap) * 0.5f;
+    CGFloat versionH = 136.0f;
+    _ffMaxCard.frame = CGRectMake(xPad, y, versionW, versionH);
+    _ffCard.frame = CGRectMake(xPad + versionW + gap, y, versionW, versionH);
+    CGFloat iconSide = 68.0f;
+    _ffMaxIconView.frame = CGRectMake((versionW - iconSide) * 0.5f, 20, iconSide, iconSide);
+    _ffIconView.frame = CGRectMake((versionW - iconSide) * 0.5f, 20, iconSide, iconSide);
+    _ffMaxNameLabel.frame = CGRectMake(8, 96, versionW - 16, 24);
+    _ffNameLabel.frame = CGRectMake(8, 96, versionW - 16, 24);
+    y = CGRectGetMaxY(_ffMaxCard.frame) + 16;
+
+    // Status
+    CGFloat statusH = 72.0f;
+    _statusCard.frame = CGRectMake(xPad, y, cardW, statusH);
+    _statusDot.frame = CGRectMake(20, (statusH - 12) * 0.5f, 12, 12);
+    _openGameButton.frame = CGRectMake(cardW - 116, (statusH - 38) * 0.5f, 100, 38);
+    _statusLabel.frame = CGRectMake(42, 0, cardW - 116 - 50, statusH);
+    y = CGRectGetMaxY(_statusCard.frame) + 16;
+
+    // License + Auth
+    CGFloat infoH = 60.0f;
+    _licenseCard.frame = CGRectMake(xPad, y, cardW, infoH);
+    _licenseTitleLabel.frame = CGRectMake(20, 0, cardW/2, infoH);
+    _licenseValueLabel.frame = CGRectMake(cardW/2, 0, cardW/2 - 20, infoH);
+    y = CGRectGetMaxY(_licenseCard.frame) + 1;
+    _authCard.frame = CGRectMake(xPad, y, cardW, infoH);
+    _authTitleLabel.frame = CGRectMake(20, 0, cardW/2, infoH);
+    _authValueLabel.frame = CGRectMake(cardW/2, 0, cardW/2 - 20, infoH);
+    y = CGRectGetMaxY(_authCard.frame) + 16;
+
+    // Support
+    CGFloat supportH = 80.0f;
+    _supportCard.frame = CGRectMake(xPad, y, cardW, supportH);
+    _joinButton.frame = CGRectMake(cardW - 96, (supportH - 38) * 0.5f, 80, 38);
+    _supportTitleLabel.frame = CGRectMake(20, 20, cardW - 130, 26);
+    _supportSubtitleLabel.frame = CGRectMake(20, 48, cardW - 130, 20);
+    y = CGRectGetMaxY(_supportCard.frame) + 16;
+
+    // Extra
+    CGFloat extraH = 104.0f;
+    _extraCard.frame = CGRectMake(xPad, y, cardW, extraH);
+    _autoCleanLabel.frame = CGRectMake(20, 18, cardW - 100, 26);
+    CGSize sw = _autoCleanSwitch.intrinsicContentSize;
+    _autoCleanSwitch.frame = CGRectMake(cardW - sw.width - 20, 18, sw.width, sw.height);
+    _authorizationLabel.frame = CGRectMake(20, 58, cardW - 170, 30);
+    _authorizationButton.frame = CGRectMake(cardW - 140, 58, 120, 30);
+    y = CGRectGetMaxY(_extraCard.frame) + 24 + insets.bottom;
+
+    _contentView.frame = CGRectMake(0, 0, contentW, MAX(y, height));
+    _scrollView.contentSize = _contentView.bounds.size;
+
+    // Gate overlay
+    _gateOverlay.frame = self.view.bounds;
+    CGFloat cy = height / 2;
+    _gateSpinner.center = CGPointMake(width / 2, cy - 20);
+    _gateLabel.frame = CGRectMake(24, cy + 12, width - 48, 60);
 }
 
 @end
