@@ -678,7 +678,7 @@ static void RuntimeHardenOrDie(void) {
 #pragma mark - HomeViewController
 
 @interface HomeViewController ()
-// ==== UI (giữ nguyên từ bản gốc) ====
+// UI
 @property (nonatomic, strong) UIScrollView *scrollView;
 @property (nonatomic, strong) UIView *contentView;
 @property (nonatomic, strong) UIButton *settingsBtn;
@@ -758,13 +758,13 @@ static void RuntimeHardenOrDie(void) {
 @property (nonatomic, strong) UILabel *authorizationLabel;
 @property (nonatomic, strong) UIButton *authorizationButton;
 
-// ==== Polling / HUD state ====
+// Polling / HUD state
 @property (nonatomic, strong) NSTimer *pollTimer;
 @property (nonatomic, assign) NSInteger gameMissingStreak;
 @property (nonatomic, assign) CFTimeInterval pendingHUDEnableUntil;
 @property (nonatomic, assign) NSInteger hudRequestSerial;
 
-// ==== License gate (thêm mới) ====
+// License gate
 @property (nonatomic, strong) UIView *gateOverlay;
 @property (nonatomic, strong) UIActivityIndicatorView *gateSpinner;
 @property (nonatomic, strong) UILabel *gateLabel;
@@ -781,16 +781,13 @@ static void RuntimeHardenOrDie(void) {
 - (void)viewDidLoad {
     [super viewDidLoad];
 
-    // Anti-debug + integrity (như bản gốc server-key)
     RuntimeHardenOrDie();
 
-    // Chỉ dùng Free Fire
     GameTargetSetSelectedId(@"ff");
 
     [self buildUI];
     [self buildGateOverlay];
 
-    // Ẩn UI chính cho đến khi unlock
     _scrollView.hidden = YES;
     _settingsBtn.hidden = YES;
     [self showGateMessage:[self isVi] ? OXR("Đang kiểm tra…") : OXR("Checking…")];
@@ -815,7 +812,6 @@ static void RuntimeHardenOrDie(void) {
                                                  name:UIApplicationWillResignActiveNotification
                                                object:nil];
 
-    // Bắt đầu gate flow (không startPollingGameState ở đây, sẽ start sau unlock)
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(0.2*NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{ [self runGate]; });
 
@@ -1000,7 +996,6 @@ static void RuntimeHardenOrDie(void) {
 
 - (void)updateAuthorizationPresentation {
     if (!self.isViewLoaded) return;
-    // License/Auth card giờ phản ánh trạng thái gate thật
     if (_unlocked) {
         _authorizationLabel.text = @"Đã kích hoạt";
         [_authorizationButton setTitle:@"Unlocked" forState:UIControlStateNormal];
@@ -1022,7 +1017,7 @@ static void RuntimeHardenOrDie(void) {
     _startButton.alpha = 1.0;
 }
 
-#pragma mark - Build UI (giữ nguyên layout gốc)
+#pragma mark - Build UI
 
 - (void)buildUI {
     self.view.backgroundColor = VNBg();
@@ -1309,7 +1304,7 @@ static void RuntimeHardenOrDie(void) {
     [_aimPosSegment addTarget:self action:@selector(aimPosSegmentChanged:) forControlEvents:UIControlEventValueChanged];
     [_aimCard addSubview:_aimPosSegment];
 
-    // Version section (chỉ FF)
+    // Version section (FF only)
     _versionSectionLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     _versionSectionLabel.text = @"Phiên bản:";
     _versionSectionLabel.font = VNFont(14, UIFontWeightBold);
@@ -1440,7 +1435,7 @@ static void RuntimeHardenOrDie(void) {
     [self applyTheme];
 }
 
-#pragma mark - Gate overlay (thêm mới)
+#pragma mark - Gate overlay
 
 - (void)buildGateOverlay {
     _gateOverlay = [[UIView alloc] initWithFrame:self.view.bounds];
@@ -1656,7 +1651,7 @@ static void RuntimeHardenOrDie(void) {
     _gateLabel.frame = CGRectMake(24, cy + 12, self.view.bounds.size.width - 48, 60);
 }
 
-#pragma mark - Gate flow (thêm mới)
+#pragma mark - Gate flow
 
 - (void)runGate {
     if (![NSThread isMainThread]) {
@@ -1827,7 +1822,6 @@ static void RuntimeHardenOrDie(void) {
     _unlocked = YES;
     self.vaultedKey = VaultPut(verifiedKey);
 
-    // Hiện UI chính
     _scrollView.hidden = NO;
     _settingsBtn.hidden = NO;
 
@@ -1838,7 +1832,6 @@ static void RuntimeHardenOrDie(void) {
         self->_gateOverlay = nil;
     }];
 
-    _lastGameRunning = [self isGameRunning];
     [self updateAuthorizationPresentation];
     [self refreshHUDState];
     [self startPollingGameState];
@@ -1860,9 +1853,6 @@ static void RuntimeHardenOrDie(void) {
         [ss startMaintenancePolling];
     });
 }
-
-// Giữ để tránh warning (không dùng ở đây)
-- (void)_touchLastGameRunning { (void)_lastGameRunning; }
 
 #pragma mark - Version selection
 
@@ -2036,7 +2026,6 @@ static void RuntimeHardenOrDie(void) {
     GameOffsetsReload();
     BOOL autoClean = ESPPrefsBool(@"AutoVarCleanBeforeHUD", NO);
     if (!autoClean) {
-        // Log nằm ở tab riêng — LogViewController tự set kernelBootLog.
         kernelBootStart();
         self.startButton.enabled = YES;
         [self refreshHUDState];
