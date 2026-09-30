@@ -32,7 +32,6 @@ static uint64_t ReadGameFacadeStatics(uint64_t typeInfo) {
     for (size_t i = 0; i < sizeof(staticOffs) / sizeof(staticOffs[0]); i++) {
         uint64_t st = ReadAddr<uint64_t>(typeInfo + staticOffs[i]);
         if (!isVaildPtr(st)) continue;
-        // Valid if either CurrentMatchGame or CurrentGame looks like a heap ptr.
         uint64_t mg = ReadAddr<uint64_t>(st + (uint64_t)kCurrentMatchGame);
         uint64_t cg = ReadAddr<uint64_t>(st + (uint64_t)kCurrentGame);
         if (isVaildPtr(mg) || isVaildPtr(cg)) return st;
@@ -44,17 +43,15 @@ uint64_t getMatchGame(uint64_t Moudule_Base) {
     if (!isVaildPtr((uintptr_t)Moudule_Base))
         return 0;
 
-    // Primary TypeInfo from offset table + nearby + known dumps.
-    // MAX current (offsetmax.h 2026-08): 0xC361EB0 — old 0xC3299C8 kept as fallback.
     uint64_t primary = (uint64_t)kGameFacadeTypeInfo;
     uint64_t candidates[] = {
         primary,
         primary - 0x1000, primary + 0x1000,
         primary - 0x2000, primary + 0x2000,
-        0xBFD8978ULL, // known FFTH dump
-        0xC361EB0ULL, // current MAX GameFacade_TypeInfo
-        0xC3299C8ULL, // older MAX dump
-        0xC012848ULL, // FFTH table default
+        0xBFD8978ULL,
+        0xC361EB0ULL,
+        0xC3299C8ULL,
+        0xC012848ULL,
     };
     for (size_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++) {
         uint64_t off = candidates[i];
@@ -66,11 +63,6 @@ uint64_t getMatchGame(uint64_t Moudule_Base) {
         uint64_t matchGame = ReadMatchGameFromGameFacadeStatics(statics);
         if (isVaildPtr(matchGame)) return matchGame;
     }
-
-    // Il2CppResolveMatchGame needs a FreeFire RemoteCall session. While the
-    // SpringBoard overlay owns the global RemoteCall, calling it would dlsym
-    // into SB (useless) and add IPC load. Skip here; TypeInfo candidates above
-    // cover FF + current MAX.
     return 0;
 }
 
@@ -91,8 +83,6 @@ uint64_t CameraMain(uint64_t matchgame) {
     return ReadAddr<uint64_t>(CameraControllerManager + kMainCamera);
 }
 
-// Bulk-read 16 floats (64 bytes) so view/proj don't tear across 16 remote reads
-// under lag — torn matrices make ESP boxes "slide with strafe then snap back".
 static void TipaReadMatrix16(uint64_t addr, float *out) {
     if (!_read((long)addr, out, 16 * (int)sizeof(float))) {
         for (int i = 0; i < 16; i++)
@@ -122,7 +112,6 @@ bool GetViewMatrixInto(uint64_t cameraMain, float *out16) {
     TipaReadMatrix16(v1 + kViewMatrixOff, V);
     TipaReadMatrix16(v1 + kProjMatrixOff, P);
     TipaMultiply4x4(P, V, out16);
-    // Reject NaN / zeroed matrix (common mid-teleport or bad ptr).
     if (isnan(out16[0]) || isnan(out16[15]))
         return false;
     float sumAbs = 0.f;
@@ -141,8 +130,6 @@ float* GetViewMatrix(uint64_t cameraMain) {
 
 bool IsAtLobby(uint64_t Moudule_Base) {
     if (!isVaildPtr((uintptr_t)Moudule_Base)) return true;
-    // Use shared resolver (multi-offset + multi static_fields) so lobby detect
-    // matches getMatchGame and does not false-lobby when TypeInfo moved slightly.
     uint64_t matchGame = getMatchGame(Moudule_Base);
     return !isVaildPtr(matchGame);
 }
@@ -154,11 +141,6 @@ uint64_t getTransNode(uint64_t BodyPart) {
     return node;
 }
 
-// Dump stores ITransformNode* on Player. getPositionExt expects a Transform-like
-// object and first reads +kTransformInner (0x10). Try:
-//  1) node itself (works if node already has transform layout)
-//  2) node->+0x10 (common ITransformNode -> Transform)
-// Return the pointer that yields a non-zero world position.
 static uint64_t getBoneTrans(uint64_t player, uintptr_t nodeOffset) {
     if (!isVaildPtr((uintptr_t)player)) return 0;
     uint64_t node = ReadAddr<uint64_t>(player + nodeOffset);
@@ -175,7 +157,6 @@ static uint64_t getBoneTrans(uint64_t player, uintptr_t nodeOffset) {
         if (!(via.x == 0.0f && via.y == 0.0f && via.z == 0.0f)) {
             return inner;
         }
-        // Some wrappers nest one more level.
         uint64_t inner2 = getTransNode(inner);
         if (isVaildPtr((uintptr_t)inner2)) {
             Vector3 via2 = getPositionExt(inner2);
@@ -189,8 +170,6 @@ static uint64_t getBoneTrans(uint64_t player, uintptr_t nodeOffset) {
 }
 
 uint64_t getHead(uint64_t player) {
-    // FF dump: HeadNode 0x638, next slot 0x640 is HIP (kHipNode).
-    // NEVER fall back to +0x8 — that made aim snap head→hip→head (chest jitter while firing).
     return getBoneTrans(player, kHeadNode);
 }
 
@@ -237,17 +216,59 @@ uint64_t getRightHand(uint64_t player) {
     return getBoneTrans(player, kRightHandNode);
 }
 
+// ============================================================
+//  isLocalTeamMate — CHỈ SỬA HÀM NÀY
+//  Bug gốc: TeamID struct read lỗi (0) → không chặn được teammate
+//           → ESP vẽ nhầm đồng đội.
+//  Fix:    (1) Bot chặn tuyệt đối (không phụ thuộc isAimIgnoreBot)
+//          (2) UID check trước khi dùng TeamID
+//          (3) Fallback đọc TeamID tại nhiều offset trong struct
+//          (4) Nếu 1 trong 2 TeamID = 0 → không kết luận
+// ============================================================
 bool isLocalTeamMate(uint64_t localPlayer, uint64_t Player) {
     if (!isVaildPtr(localPlayer) || !isVaildPtr(Player)) return false;
     if (localPlayer == Player) return true;
-    extern bool isAimIgnoreBot;
-    const bool isBot = ReadAddr<uint8_t>(Player + (uint64_t)kIsClientBot) != 0;
-    if (isBot && !isAimIgnoreBot) return false;
-    COW_GamePlay_PlayerID_o myPlayerID = ReadAddr<COW_GamePlay_PlayerID_o>(localPlayer + kPlayerID);
-    COW_GamePlay_PlayerID_o PlayerID = ReadAddr<COW_GamePlay_PlayerID_o>(Player + kPlayerID);
-    int myTeamID = myPlayerID.m_TeamID;
-    int TeamID = PlayerID.m_TeamID;
-    if (myTeamID == 0 || TeamID == 0) return false;
+
+    // (1) Bot KHÔNG BAO GIỜ là đồng đội — chặn trước tiên.
+    if (ReadAddr<uint8_t>(Player + (uint64_t)kIsClientBot) != 0) return false;
+
+    // (2) UID trùng → cùng người.
+    uint64_t myUid = ReadAddr<uint64_t>(localPlayer + kUserID);
+    uint64_t uid   = ReadAddr<uint64_t>(Player + kUserID);
+    if (myUid != 0 && uid != 0 && myUid == uid) return true;
+
+    // (3) Đọc TeamID qua struct PlayerID.
+    COW_GamePlay_PlayerID_o myPID = ReadAddr<COW_GamePlay_PlayerID_o>(localPlayer + kPlayerID);
+    COW_GamePlay_PlayerID_o tPID  = ReadAddr<COW_GamePlay_PlayerID_o>(Player + kPlayerID);
+    int myTeamID = myPID.m_TeamID;
+    int TeamID   = tPID.m_TeamID;
+
+    // (4) Struct read lỗi (0) → thử đọc int thô tại các slot phổ biến.
+    if (myTeamID <= 0 || myTeamID > 999) {
+        const uint64_t cand[] = {
+            (uint64_t)kPlayerID + 0x4,
+            (uint64_t)kPlayerID + 0x8,
+            (uint64_t)kPlayerID + 0xC,
+        };
+        for (int i = 0; i < 3; i++) {
+            int t = ReadAddr<int>(localPlayer + cand[i]);
+            if (t > 0 && t < 999) { myTeamID = t; break; }
+        }
+    }
+    if (TeamID <= 0 || TeamID > 999) {
+        const uint64_t cand[] = {
+            (uint64_t)kPlayerID + 0x4,
+            (uint64_t)kPlayerID + 0x8,
+            (uint64_t)kPlayerID + 0xC,
+        };
+        for (int i = 0; i < 3; i++) {
+            int t = ReadAddr<int>(Player + cand[i]);
+            if (t > 0 && t < 999) { TeamID = t; break; }
+        }
+    }
+
+    // (5) Cả hai phải có TeamID hợp lệ — nếu 1 bên 0 thì KHÔNG kết luận teammate.
+    if (myTeamID <= 0 || TeamID <= 0) return false;
     return myTeamID == TeamID;
 }
 
@@ -265,9 +286,6 @@ bool isSamePlayerAsLocal(uint64_t localPlayer, uint64_t player) {
     return false;
 }
 
-// PRI DataPool on Player (dump-stable): pool @ 0x70, inner @ +0x10,
-// entries base +0x20, stride 0x8, value @ +0x18. varID 0=CurHP, 1=MaxHP.
-// Some seasons/build paths put a thin wrapper; try pool ptr alts + value size.
 static int ReadDataPoolVar(uint64_t player, int varID) {
     if (!isVaildPtr(player) || varID < 0 || varID > 64) return 0;
     const uint64_t poolOff = kDataPool ? kDataPool : 0x70;
@@ -276,7 +294,6 @@ static int ReadDataPoolVar(uint64_t player, int varID) {
     const uint64_t stride = kDataPoolEntryStride ? kDataPoolEntryStride : 0x8;
     const uint64_t valueOff = kDataPoolValue ? kDataPoolValue : 0x18;
 
-    // Player.DataPool may be the pool object, or a one-hop wrapper.
     uint64_t pools[3] = {
         ReadAddr<uint64_t>(player + poolOff),
         0, 0
@@ -295,12 +312,10 @@ static int ReadDataPoolVar(uint64_t player, int varID) {
             if (!isVaildPtr(inner)) continue;
             uint64_t entry = ReadAddr<uint64_t>(inner + entriesBase + stride * (uint64_t)varID);
             if (!isVaildPtr(entry)) continue;
-            // Value may be int32 or uint16 at +0x18 (and rarely +0x10/+0x14).
             const uint64_t valOffs[] = { valueOff, 0x18, 0x14, 0x10 };
             for (size_t v = 0; v < sizeof(valOffs) / sizeof(valOffs[0]); v++) {
                 int32_t i32 = ReadAddr<int32_t>(entry + valOffs[v]);
                 if (varID <= 1) {
-                    // HP / MaxHP: accept uint16 range stored in low word too.
                     if (i32 >= 0 && i32 <= 2000) return i32;
                     uint16_t u16 = ReadAddr<uint16_t>(entry + valOffs[v]);
                     if (u16 > 0 && u16 <= 2000) return (int)u16;
@@ -335,7 +350,6 @@ int get_CurHP(uint64_t Player) {
 
 int get_MaxHP(uint64_t Player) {
     int maxHp = ReadDataPoolVar(Player, 1);
-    // Some shells expose only CurHP; treat positive CurHP as alive shell.
     if (maxHp <= 0) {
         int cur = ReadDataPoolVar(Player, 0);
         if (cur > 0 && cur <= 2000) return cur;
@@ -345,7 +359,6 @@ int get_MaxHP(uint64_t Player) {
 
 void EnableFastReload(uint64_t localPlayerPawn, bool isEnabled, float speedMult) {
     if (!isVaildPtr(localPlayerPawn)) return;
-    // PlayerAttributes: FF 0x700 / MAX 0x708 (kPlayerAttributes)
     uint64_t attrsOff = kPlayerAttributes ? kPlayerAttributes : 0x700;
     uint64_t attrs = ReadAddr<uint64_t>(localPlayerPawn + attrsOff);
     if (!isVaildPtr(attrs)) return;
@@ -354,18 +367,12 @@ void EnableFastReload(uint64_t localPlayerPawn, bool isEnabled, float speedMult)
     (void)speedMult;
 }
 
-// EAimAssist dump: AllOn=0, OffOnSighting=1, AllOff=2
 enum : int32_t {
     kEAimAssistAllOn = 0,
     kEAimAssistOffOnSighting = 1,
     kEAimAssistAllOff = 2,
 };
 
-// Soft-zero ONLY the two dump-confirmed chest-magnet static scales.
-// Never spray-write AA object instances or unknown static slots — that caused
-// FreeFire SIGSEGV (bad ptr ~0x100000000) after writing m_AimAssist+0x10..0x40.
-// Save originals so wall-off restore can put vanilla AA back (without this,
-// Aim Behind Wall ON zeroed strength forever → aimbot/assist felt broken after OFF).
 static float g_savedAaStaticA = 1.0f;
 static float g_savedAaStaticB = 1.0f;
 static bool g_aaStaticsSaved = false;
@@ -391,11 +398,9 @@ static void SoftZeroAimAssistStrength(void) {
 
     float a = ReadAddr<float>(statics + kAaStaticKnolgmjlcef);
     float b = ReadAddr<float>(statics + kAaStaticNfkcllpalej);
-    // Save first non-zero values we see in a disable session.
     if (!g_aaStaticsSaved) {
         if (a > 0.001f && a < 100.0f) g_savedAaStaticA = a;
         if (b > 0.001f && b < 100.0f) g_savedAaStaticB = b;
-        // Fallback if already zeroed by a previous session without restore.
         if (g_savedAaStaticA <= 0.001f) g_savedAaStaticA = 1.0f;
         if (g_savedAaStaticB <= 0.001f) g_savedAaStaticB = 1.0f;
         g_aaStaticsSaved = true;
@@ -421,9 +426,6 @@ static void SoftRestoreAimAssistStrength(void) {
     g_aaStaticsSaved = false;
 }
 
-// Player.FGEAKHHPKCC (EAimAssist) dump: AllOn=0, OffOnSighting=1, AllOff=2.
-// Writing the enum kills default chest magnet without stomping m_AimAssist object layout
-// (object float spray crashed at 0x100000000). Keep pointers non-null.
 static int32_t g_savedEAimAssistMode = kEAimAssistAllOn;
 static bool g_eAimAssistModeSaved = false;
 static bool g_defaultAADisabled = false;
@@ -432,10 +434,6 @@ void DisableGameDefaultAimAssist(uint64_t localPlayerPawn, bool disable) {
     if (!isVaildPtr(localPlayerPawn)) return;
 
     if (disable) {
-        // Kill vanilla AA fully while custom aimbot/assist is on (wall ON or OFF):
-        // 1) zero magnet static scales
-        // 2) force EAimAssist AllOff so fire-stick / ADS chest magnet cannot re-pull
-        // Wall-OFF LOS is geometric (cover raycast), NOT AA-list dependent — safe to AllOff.
         SoftZeroAimAssistStrength();
 
         int32_t cur = ReadAddr<int32_t>(localPlayerPawn + kEAimAssistMode);
@@ -454,7 +452,6 @@ void DisableGameDefaultAimAssist(uint64_t localPlayerPawn, bool disable) {
         return;
     }
 
-    // Restore when custom aimbot/assist is fully off.
     if (g_defaultAADisabled || g_aaStaticsZeroed || g_aaStaticsSaved) {
         SoftRestoreAimAssistStrength();
         if (g_eAimAssistModeSaved) {
@@ -462,7 +459,6 @@ void DisableGameDefaultAimAssist(uint64_t localPlayerPawn, bool disable) {
             if (restore != kEAimAssistAllOn && restore != kEAimAssistOffOnSighting && restore != kEAimAssistAllOff) {
                 restore = kEAimAssistAllOn;
             }
-            // Never restore AllOff as "original" when user turned custom aim off.
             if (restore == kEAimAssistAllOff) restore = kEAimAssistAllOn;
             WriteAddr<int32_t>(localPlayerPawn + kEAimAssistMode, restore);
         }
